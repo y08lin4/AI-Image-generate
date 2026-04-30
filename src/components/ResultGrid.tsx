@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AspectRatio, GenerateResultItem, ResolutionTier } from '../types'
+import type { GenerateResultItem } from '../types'
 import { copyImageToClipboard, downloadDataUrl } from '../lib/api'
-import { getResolutionLabel } from '../lib/ratios'
 
 interface Props {
   loading: boolean
   placeholders: number
   results: GenerateResultItem[]
-  ratio: AspectRatio
-  resolution: ResolutionTier
   onUseAsReference: (dataUrl: string) => void
   onMessage: (message: string, type?: 'ok' | 'error') => void
 }
@@ -17,14 +14,15 @@ interface Props {
 type PreviewState = {
   src: string
   title: string
-  ratio: AspectRatio
-  resolution: ResolutionTier
   fileSize: string
+  dimensions?: ImageDimensions
 }
+
+type ImageDimensions = { width: number; height: number }
 
 type ResultCard = { index: number; loading: true } | (GenerateResultItem & { loading: false })
 
-export function ResultGrid({ loading, placeholders, results, ratio, resolution, onUseAsReference, onMessage }: Props) {
+export function ResultGrid({ loading, placeholders, results, onUseAsReference, onMessage }: Props) {
   const [preview, setPreview] = useState<PreviewState | null>(null)
 
   useEffect(() => {
@@ -68,10 +66,12 @@ export function ResultGrid({ loading, placeholders, results, ratio, resolution, 
     setPreview({
       src: card.image,
       title: `生成结果 ${card.index + 1}`,
-      ratio,
-      resolution,
       fileSize: formatImageSize(card.image),
     })
+  }
+
+  function updatePreviewDimensions(src: string, dimensions: ImageDimensions) {
+    setPreview((current) => current && current.src === src ? { ...current, dimensions } : current)
   }
 
   return (
@@ -151,11 +151,18 @@ export function ResultGrid({ loading, placeholders, results, ratio, resolution, 
           <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.title}>
             <button type="button" className="preview-close" onClick={() => setPreview(null)} aria-label="关闭预览">×</button>
             <div className="preview-info">
-              <span>{getResolutionLabel(preview.resolution)}</span>
-              <span>{preview.ratio === 'auto' ? '自动比例' : preview.ratio}</span>
+              <span>{formatDimensions(preview.dimensions)}</span>
+              <span>{formatActualRatio(preview.dimensions)}</span>
               <span>{preview.fileSize}</span>
             </div>
-            <img src={preview.src} alt={preview.title} />
+            <img
+              src={preview.src}
+              alt={preview.title}
+              onLoad={(event) => updatePreviewDimensions(preview.src, {
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              })}
+            />
           </div>
         </div>,
         document.body,
@@ -170,6 +177,27 @@ function formatImageSize(dataUrl: string) {
   const mb = bytes / 1024 / 1024
   if (mb >= 1) return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+function formatDimensions(dimensions?: ImageDimensions) {
+  return dimensions ? `${dimensions.width}×${dimensions.height}` : '读取尺寸中'
+}
+
+function formatActualRatio(dimensions?: ImageDimensions) {
+  if (!dimensions) return '读取比例中'
+  const divisor = gcd(dimensions.width, dimensions.height)
+  return `${dimensions.width / divisor}:${dimensions.height / divisor}`
+}
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a)
+  let y = Math.abs(b)
+  while (y) {
+    const next = x % y
+    x = y
+    y = next
+  }
+  return x || 1
 }
 
 function getDataUrlBytes(dataUrl: string) {

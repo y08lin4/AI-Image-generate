@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AspectRatio, HistoryItem, ResolutionTier } from '../types'
+import type { HistoryItem } from '../types'
 import { getResolutionLabel } from '../lib/ratios'
 import { copyImageToClipboard } from '../lib/api'
 
@@ -18,10 +18,11 @@ interface Props {
 type PreviewState = {
   src: string
   title: string
-  ratio: AspectRatio
-  resolution?: ResolutionTier
   fileSize: string
+  dimensions?: ImageDimensions
 }
+
+type ImageDimensions = { width: number; height: number }
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleString('zh-CN', {
@@ -52,14 +53,16 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
     }
   }, [preview])
 
-  function openPreview(item: HistoryItem, src: string, index: number) {
+  function openPreview(src: string, index: number) {
     setPreview({
       src,
       title: `历史图片 ${index + 1}`,
-      ratio: item.ratio,
-      resolution: item.resolution,
       fileSize: formatImageSize(src),
     })
+  }
+
+  function updatePreviewDimensions(src: string, dimensions: ImageDimensions) {
+    setPreview((current) => current && current.src === src ? { ...current, dimensions } : current)
   }
 
   async function copyHistoryImage(src: string) {
@@ -104,11 +107,11 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
               <div className="history-thumbs">
                 {item.images.slice(0, 3).map((src, index) => (
                   <div className="history-thumb-card" key={`${item.id}-${index}`}>
-                    <button type="button" className="history-thumb-image" onClick={() => openPreview(item, src, index)} title="放大预览">
+                    <button type="button" className="history-thumb-image" onClick={() => openPreview(src, index)} title="放大预览">
                       <img src={src} alt={`历史图片 ${index + 1}`} />
                     </button>
                     <div className="history-thumb-actions">
-                      <button type="button" onClick={() => openPreview(item, src, index)}>放大</button>
+                      <button type="button" onClick={() => openPreview(src, index)}>放大</button>
                       <button type="button" onClick={() => void copyHistoryImage(src)}>复制</button>
                       <button type="button" onClick={() => onUseImage(src)}>参考</button>
                     </div>
@@ -137,11 +140,18 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
           <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.title}>
             <button type="button" className="preview-close" onClick={() => setPreview(null)} aria-label="关闭预览">×</button>
             <div className="preview-info">
-              <span>{preview.resolution ? getResolutionLabel(preview.resolution) : '历史'}</span>
-              <span>{preview.ratio === 'auto' ? '自动比例' : preview.ratio}</span>
+              <span>{formatDimensions(preview.dimensions)}</span>
+              <span>{formatActualRatio(preview.dimensions)}</span>
               <span>{preview.fileSize}</span>
             </div>
-            <img src={preview.src} alt={preview.title} />
+            <img
+              src={preview.src}
+              alt={preview.title}
+              onLoad={(event) => updatePreviewDimensions(preview.src, {
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              })}
+            />
           </div>
         </div>,
         document.body,
@@ -156,6 +166,27 @@ function formatImageSize(dataUrl: string) {
   const mb = bytes / 1024 / 1024
   if (mb >= 1) return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+function formatDimensions(dimensions?: ImageDimensions) {
+  return dimensions ? `${dimensions.width}×${dimensions.height}` : '读取尺寸中'
+}
+
+function formatActualRatio(dimensions?: ImageDimensions) {
+  if (!dimensions) return '读取比例中'
+  const divisor = gcd(dimensions.width, dimensions.height)
+  return `${dimensions.width / divisor}:${dimensions.height / divisor}`
+}
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a)
+  let y = Math.abs(b)
+  while (y) {
+    const next = x % y
+    x = y
+    y = next
+  }
+  return x || 1
 }
 
 function getDataUrlBytes(dataUrl: string) {

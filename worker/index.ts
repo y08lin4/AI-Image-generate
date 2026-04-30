@@ -192,7 +192,7 @@ async function handlePixhostUpload(request: Request) {
     return json({
       ok: true,
       name: typeof data.name === 'string' ? data.name : fileName,
-      showUrl: normalizePublicUrl(showUrl),
+      showUrl: toPixhostDirectImageUrl(showUrl),
       thumbUrl: thumbUrl ? normalizePublicUrl(thumbUrl) : undefined,
     })
   } catch (error) {
@@ -483,6 +483,20 @@ function normalizeUploadFileName(value: unknown, mime: string) {
 
 function normalizePublicUrl(value: string) {
   return value.startsWith('//') ? `https:${value}` : value
+}
+
+function toPixhostDirectImageUrl(value: string) {
+  const normalized = normalizePublicUrl(value)
+  try {
+    const url = new URL(normalized)
+    const match = url.pathname.match(/^\/show\/([^/]+)\/(.+)$/)
+    if (match && /(^|\.)pixhost\.to$/i.test(url.hostname)) {
+      return `https://img2.pixhost.to/images/${match[1]}/${match[2]}`
+    }
+  } catch {
+    // fall through to original URL
+  }
+  return normalized
 }
 
 async function callTextImage(payload: NormalizedPayload, signal: AbortSignal) {
