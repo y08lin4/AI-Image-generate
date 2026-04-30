@@ -188,7 +188,7 @@ export async function uploadImageToPixhost(
   } | null
 
   if (!response.ok || !data?.ok || !data.showUrl) {
-    throw new Error(data?.message || `图床上传失败：HTTP ${response.status}`)
+    throw new Error(data?.message || formatHttpError(response.status, '图床上传失败'))
   }
 
   return { remoteUrl: data.showUrl, remoteThumbUrl: data.thumbUrl }
@@ -363,26 +363,45 @@ function getRequestedSize(payload: Pick<GenerateRequest, 'ratio' | 'resolution'>
 }
 
 function formatFetchError(message: string) {
-  if (/abort|timeout|operation was aborted/i.test(message)) return '请求超时'
+  if (/abort|timeout|operation was aborted/i.test(message)) {
+    return '请求超时：生图通常需要 100-300 秒，请调高超时时间或改用 Worker 流式代理'
+  }
   if (/524|cloudflare/i.test(message)) return formatCloudflare524Error()
+  if (/cors/i.test(message)) {
+    return 'CORS：浏览器直连被上游拦截，建议切换到 Worker 流式代理模式'
+  }
   if (/failed to fetch|load failed|networkerror/i.test(message)) {
-    return '浏览器直连失败，可能是 CORS、网络或混合内容限制；建议切换到 Worker 代理'
+    return '浏览器直连失败，可能是 CORS 或网络限制；建议切换到 Worker 流式代理模式'
   }
   return message || '请求失败'
 }
 
 async function parseErrorResponse(response: Response): Promise<GenerateErrorResponse> {
-  if (response.status === 524) {
-    return { ok: false, type: 'upstream_error', message: formatCloudflare524Error(), status: 524 }
-  }
   const data = await response.json().catch(() => null) as GenerateErrorResponse | null
-  return data?.ok === false
-    ? data
-    : { ok: false, type: response.status === 401 ? 'auth_error' : 'upstream_error', message: `请求失败：HTTP ${response.status}`, status: response.status }
+  if (data?.ok === false) {
+    const status = data.status || response.status
+    const shouldMapHttp = data.type === 'upstream_error' || status === 524
+    return {
+      ...data,
+      status,
+      message: shouldMapHttp ? formatHttpError(status, data.message) : data.message,
+    }
+  }
+
+  return {
+    ok: false,
+    type: response.status === 401 ? 'auth_error' : 'upstream_error',
+    message: formatHttpError(response.status),
+    status: response.status,
+  }
 }
 
 async function readUpstreamError(response: Response) {
-  if (response.status === 524) return formatCloudflare524Error()
+  const detail = await readResponseErrorDetail(response)
+  return formatHttpError(response.status, detail)
+}
+
+async function readResponseErrorDetail(response: Response) {
   const contentType = response.headers.get('Content-Type') || ''
   try {
     if (contentType.includes('application/json')) {
@@ -393,15 +412,31 @@ async function readUpstreamError(response: Response) {
       return JSON.stringify(data).slice(0, 800)
     }
     const text = await response.text()
-    if (/524|cloudflare/i.test(text)) return formatCloudflare524Error()
-    return text.slice(0, 800) || `HTTP ${response.status}`
+    return text.slice(0, 800)
   } catch {
-    return `HTTP ${response.status}`
+    return ''
   }
 }
 
+function formatHttpError(status: number, detail?: string) {
+  if (status === 401) return appendErrorDetail('HTTP 401：API Key 错误或额度问题，请检查 Key、账户余额和接口权限', detail)
+  if (status === 403) return appendErrorDetail('HTTP 403：无权限访问该接口或模型，模型可能不可用', detail)
+  if (status === 413) return appendErrorDetail('HTTP 413：图片太大，请压缩图片、减少参考图或降低分辨率后重试', detail)
+  if (status === 429) return appendErrorDetail('HTTP 429：请求过多触发限流，请降低并发、减少张数或稍后重试', detail)
+  if (status === 524) return formatCloudflare524Error()
+  const fallback = detail?.trim()
+  return fallback || `请求失败：HTTP ${status}`
+}
+
+function appendErrorDetail(base: string, detail?: string) {
+  const clean = detail?.trim()
+  if (!clean || clean === base || /^HTTP\s+\d+$/i.test(clean)) return base
+  if (/524|cloudflare/i.test(clean)) return formatCloudflare524Error()
+  return `${base}；上游详情：${clean.slice(0, 300)}`
+}
+
 function formatCloudflare524Error() {
-  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名或改用非 Cloudflare 中转后重试'
+  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名，或改用非 Cloudflare 中转后重试'
 }
 
 async function parseImageResponse(response: Response, signal: AbortSignal): Promise<{ image?: string; mime?: string }> {

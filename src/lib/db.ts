@@ -59,6 +59,31 @@ export async function deleteHistory(id: string) {
   db.close()
 }
 
+export async function updateHistoryImageUrl(id: string, index: number, remoteUrl: string, remoteThumbUrl?: string) {
+  const db = await openDb()
+  const tx = db.transaction(STORE, 'readwrite')
+  const store = tx.objectStore(STORE)
+  const item = await new Promise<HistoryItem | undefined>((resolve, reject) => {
+    const request = store.get(id)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result as HistoryItem | undefined)
+  })
+
+  if (item) {
+    const historyIndex = item.imageResultIndexes?.includes(index)
+      ? item.imageResultIndexes.indexOf(index)
+      : index
+    const remoteUrls = [...(item.remoteUrls || [])]
+    const remoteThumbUrls = [...(item.remoteThumbUrls || [])]
+    remoteUrls[historyIndex] = remoteUrl
+    if (remoteThumbUrl) remoteThumbUrls[historyIndex] = remoteThumbUrl
+    store.put({ ...item, remoteUrls, remoteThumbUrls })
+  }
+
+  await txDone(tx)
+  db.close()
+}
+
 export async function clearHistory() {
   const db = await openDb()
   const tx = db.transaction(STORE, 'readwrite')

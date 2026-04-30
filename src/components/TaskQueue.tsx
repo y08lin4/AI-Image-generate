@@ -4,6 +4,7 @@ import { ResultGrid } from './ResultGrid'
 
 interface Props {
   tasks: GenerationTask[]
+  onUploadImage: (taskId: string, result: GenerationTask['results'][number]) => void
   onUseAsReference: (dataUrl: string) => void
   onMessage: (message: string, type?: 'ok' | 'error') => void
   onRemove: (id: string) => void
@@ -31,7 +32,7 @@ function statusText(task: GenerationTask) {
   return failedCount ? `部分完成 ${okCount}/${task.count}` : '已完成'
 }
 
-export function TaskQueue({ tasks, onUseAsReference, onMessage, onRemove, onClearFinished }: Props) {
+export function TaskQueue({ tasks, onUploadImage, onUseAsReference, onMessage, onRemove, onClearFinished }: Props) {
   if (!tasks.length) {
     return (
       <div className="empty-state">
@@ -76,6 +77,7 @@ export function TaskQueue({ tasks, onUseAsReference, onMessage, onRemove, onClea
               loading={task.status === 'running'}
               placeholders={task.count}
               results={task.results}
+              onUploadImage={(result) => onUploadImage(task.id, result)}
               onUseAsReference={onUseAsReference}
               onMessage={onMessage}
             />

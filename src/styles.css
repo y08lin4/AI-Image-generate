@@ -280,7 +280,7 @@ code { font-size: .85em; }
   backdrop-filter: blur(8px);
 }
 .url-copy-btn:disabled { background: rgba(15, 23, 42, .58); cursor: wait; }
-.url-copy-btn.error { background: rgba(220, 38, 38, .9); cursor: help; }
+.url-copy-btn.error { background: rgba(220, 38, 38, .9); cursor: pointer; }
 .card-meta { display: block; padding: 8px 10px; color: var(--muted); }
 .error-card { min-height: 240px; padding: 18px; display: flex; flex-direction: column; justify-content: center; gap: 8px; color: var(--error); background: #fef2f2; }
 .error-card p { margin: 0; color: #991b1b; }
@@ -345,6 +345,26 @@ code { font-size: .85em; }
   font-weight: 800;
   white-space: nowrap;
 }
+.preview-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 1;
+}
+.preview-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,.94);
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: var(--shadow);
+}
+.preview-actions button:hover { background: #dbeafe; color: #1d4ed8; }
 
 .task-queue { display: flex; flex-direction: column; gap: 14px; }
 .task-queue-toolbar {

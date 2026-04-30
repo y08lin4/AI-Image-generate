@@ -459,7 +459,7 @@ async function generateOne(payload: NormalizedPayload, index: number): Promise<R
     return {
       index,
       ok: false,
-      error: message === 'The operation was aborted.' || /abort|timeout/i.test(message) ? '请求超时' : message,
+      error: formatFetchError(message),
       elapsedMs: Date.now() - startedAt,
     }
   } finally {
@@ -547,7 +547,11 @@ async function callImageEdit(payload: NormalizedPayload, signal: AbortSignal) {
 }
 
 async function readUpstreamError(response: Response) {
-  if (response.status === 524) return formatCloudflare524Error()
+  const detail = await readResponseErrorDetail(response)
+  return formatHttpError(response.status, detail)
+}
+
+async function readResponseErrorDetail(response: Response) {
   const contentType = response.headers.get('Content-Type') || ''
   try {
     if (contentType.includes('application/json')) {
@@ -558,15 +562,39 @@ async function readUpstreamError(response: Response) {
       return JSON.stringify(data).slice(0, 800)
     }
     const text = await response.text()
-    if (/524|cloudflare/i.test(text)) return formatCloudflare524Error()
-    return text.slice(0, 800) || `HTTP ${response.status}`
+    return text.slice(0, 800)
   } catch {
-    return `HTTP ${response.status}`
+    return ''
   }
 }
 
+function formatFetchError(message: string) {
+  if (/abort|timeout|operation was aborted/i.test(message)) {
+    return '请求超时：生图通常需要 100-300 秒，请调高超时时间或保持 Worker 流式代理连接'
+  }
+  if (/524|cloudflare/i.test(message)) return formatCloudflare524Error()
+  return message || '请求失败'
+}
+
+function formatHttpError(status: number, detail?: string) {
+  if (status === 401) return appendErrorDetail('HTTP 401：API Key 错误或额度问题，请检查 Key、账户余额和接口权限', detail)
+  if (status === 403) return appendErrorDetail('HTTP 403：无权限访问该接口或模型，模型可能不可用', detail)
+  if (status === 413) return appendErrorDetail('HTTP 413：图片太大，请压缩图片、减少参考图或降低分辨率后重试', detail)
+  if (status === 429) return appendErrorDetail('HTTP 429：请求过多触发限流，请降低并发、减少张数或稍后重试', detail)
+  if (status === 524) return formatCloudflare524Error()
+  const fallback = detail?.trim()
+  return fallback || `请求失败：HTTP ${status}`
+}
+
+function appendErrorDetail(base: string, detail?: string) {
+  const clean = detail?.trim()
+  if (!clean || clean === base || /^HTTP\s+\d+$/i.test(clean)) return base
+  if (/524|cloudflare/i.test(clean)) return formatCloudflare524Error()
+  return `${base}；上游详情：${clean.slice(0, 300)}`
+}
+
 function formatCloudflare524Error() {
-  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名或改用非 Cloudflare 中转后重试'
+  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名，或改用非 Cloudflare 中转后重试'
 }
 
 async function parseImageResponse(response: Response, signal: AbortSignal): Promise<{ image?: string; mime?: string }> {

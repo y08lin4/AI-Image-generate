@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppSettings, AspectRatio, GenerationTask, GenerateResultItem, HistoryItem, InputImage, Mode, ResolutionTier } from './types'
 import { RatioPicker } from './components/RatioPicker'
 import { ResolutionPicker } from './components/ResolutionPicker'
@@ -7,12 +7,14 @@ import { SettingsModal } from './components/SettingsModal'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TaskQueue } from './components/TaskQueue'
 import { createId, generateImagesDirect, generateImagesStream, uploadImageToPixhost } from './lib/api'
-import { addHistory, clearHistory, deleteHistory, getHistory } from './lib/db'
+import { addHistory, clearHistory, deleteHistory, getHistory, updateHistoryImageUrl } from './lib/db'
 import { getImageSize, getResolutionLabel } from './lib/ratios'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
 import './styles.css'
 
 type Message = { text: string; type: 'ok' | 'error' | 'info' } | null
+
+type UploadResult = { index: number; remoteUrl: string; remoteThumbUrl?: string }
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
@@ -26,6 +28,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [message, setMessage] = useState<Message>(null)
+  const uploadCacheRef = useRef(new Map<string, Map<number, UploadResult>>())
 
   useEffect(() => {
     void refreshHistory()
@@ -72,6 +75,20 @@ export default function App() {
       else nextResults[index] = merged
       return { ...task, results: nextResults.filter(Boolean) }
     }))
+  }
+
+  function rememberUploadResult(taskId: string, uploaded: UploadResult) {
+    const taskUploads = uploadCacheRef.current.get(taskId) || new Map<number, UploadResult>()
+    taskUploads.set(uploaded.index, uploaded)
+    uploadCacheRef.current.set(taskId, taskUploads)
+  }
+
+  function collectCachedUploads(taskId: string, target: Map<number, UploadResult>) {
+    const cachedUploads = uploadCacheRef.current.get(taskId)
+    if (!cachedUploads) return
+    for (const [index, uploaded] of cachedUploads) {
+      target.set(index, uploaded)
+    }
   }
 
   function completeTask(taskId: string, responseResults: GenerateResultItem[], elapsedMs: number) {
@@ -182,10 +199,11 @@ export default function App() {
   ) {
     try {
       let lastPingAt = 0
+      const uploadPromises: Array<Promise<UploadResult | null>> = []
       const handleResult = (result: GenerateResultItem) => {
         updateTaskResult(taskId, result)
         if (autoUploadPixhost) {
-          void uploadGeneratedResult(taskId, result, accessPassword)
+          uploadPromises.push(uploadGeneratedResult(taskId, result, accessPassword))
         }
       }
       const response = requestMode === 'direct'
@@ -198,10 +216,32 @@ export default function App() {
             }
           })
 
-      const okImages = response.results.filter((item) => item.ok && item.image).map((item) => item.image!)
+      completeTask(taskId, response.results, response.elapsedMs)
+
+      const uploadedByIndex = new Map<number, UploadResult>()
+      collectCachedUploads(taskId, uploadedByIndex)
+      if (uploadPromises.length) {
+        const settled = await Promise.allSettled(uploadPromises)
+        for (const item of settled) {
+          if (item.status === 'fulfilled' && item.value) {
+            uploadedByIndex.set(item.value.index, item.value)
+          }
+        }
+      }
+      collectCachedUploads(taskId, uploadedByIndex)
+
+      const historyResults = response.results.map((item) => ({
+        ...item,
+        remoteUrl: uploadedByIndex.get(item.index)?.remoteUrl || item.remoteUrl,
+        remoteThumbUrl: uploadedByIndex.get(item.index)?.remoteThumbUrl || item.remoteThumbUrl,
+      }))
+      const okResults = historyResults.filter((item) => item.ok && item.image)
+      const okImages = okResults.map((item) => item.image!)
       const failedCount = response.results.length - okImages.length
 
-      completeTask(taskId, response.results, response.elapsedMs)
+      if (uploadedByIndex.size) {
+        completeTask(taskId, historyResults, response.elapsedMs)
+      }
 
       if (okImages.length) {
         await addHistory({
@@ -214,6 +254,9 @@ export default function App() {
           size: response.size,
           model: response.model,
           images: okImages,
+          imageResultIndexes: okResults.map((item) => item.index),
+          remoteUrls: okResults.map((item) => item.remoteUrl || ''),
+          remoteThumbUrls: okResults.map((item) => item.remoteThumbUrl || ''),
           failedCount,
           elapsedMs: response.elapsedMs,
         })
@@ -235,8 +278,13 @@ export default function App() {
     }
   }
 
-  async function uploadGeneratedResult(taskId: string, result: GenerateResultItem, accessPassword: string) {
-    if (!result.ok || !result.image) return
+  async function uploadGeneratedResult(
+    taskId: string,
+    result: GenerateResultItem,
+    accessPassword: string,
+    notify = false,
+  ): Promise<UploadResult | null> {
+    if (!result.ok || !result.image) return null
 
     patchTaskResult(taskId, result.index, { uploading: true, uploadError: undefined })
     try {
@@ -245,18 +293,39 @@ export default function App() {
         `ai-image-${taskId}-${result.index + 1}.png`,
         accessPassword,
       )
+      const uploadResult = { index: result.index, ...uploaded }
       patchTaskResult(taskId, result.index, {
         uploading: false,
         remoteUrl: uploaded.remoteUrl,
         remoteThumbUrl: uploaded.remoteThumbUrl,
         uploadError: undefined,
       })
+      rememberUploadResult(taskId, uploadResult)
+      if (notify) showMessage('图床上传成功，URL 已可复制', 'ok')
+      return uploadResult
     } catch (error) {
+      const message = error instanceof Error ? error.message : '图床上传失败'
       patchTaskResult(taskId, result.index, {
         uploading: false,
-        uploadError: error instanceof Error ? error.message : '图床上传失败',
+        uploadError: message,
       })
+      if (notify) showMessage(message, 'error')
+      return null
     }
+  }
+
+  function handleUploadImage(taskId: string, result: GenerateResultItem) {
+    if (!settings.accessPassword.trim()) {
+      showMessage('上传图床需要先填写 Worker 访问密码', 'error')
+      setSettingsOpen(true)
+      return
+    }
+    if (result.uploading) return
+    void uploadGeneratedResult(taskId, result, settings.accessPassword, true).then(async (uploaded) => {
+      if (!uploaded) return
+      await updateHistoryImageUrl(taskId, uploaded.index, uploaded.remoteUrl, uploaded.remoteThumbUrl)
+      await refreshHistory()
+    })
   }
 
   function handleUseAsReference(dataUrl: string) {
@@ -290,6 +359,7 @@ export default function App() {
   }
 
   function removeTask(id: string) {
+    uploadCacheRef.current.delete(id)
     setTasks((prev) => prev.filter((task) => task.id !== id))
   }
 
@@ -416,6 +486,7 @@ export default function App() {
           </div>
           <TaskQueue
             tasks={tasks}
+            onUploadImage={handleUploadImage}
             onUseAsReference={handleUseAsReference}
             onMessage={showMessage}
             onRemove={removeTask}

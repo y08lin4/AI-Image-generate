@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import type { GenerateResultItem } from '../types'
 import { copyImageToClipboard, downloadDataUrl } from '../lib/api'
+import { ImagePreviewModal } from './ImagePreviewModal'
 
 interface Props {
   loading: boolean
   placeholders: number
   results: GenerateResultItem[]
+  onUploadImage: (result: GenerateResultItem) => void
   onUseAsReference: (dataUrl: string) => void
   onMessage: (message: string, type?: 'ok' | 'error') => void
 }
@@ -14,35 +15,13 @@ interface Props {
 type PreviewState = {
   src: string
   title: string
-  fileSize: string
-  dimensions?: ImageDimensions
+  remoteUrl?: string
 }
-
-type ImageDimensions = { width: number; height: number }
 
 type ResultCard = { index: number; loading: true } | (GenerateResultItem & { loading: false })
 
-export function ResultGrid({ loading, placeholders, results, onUseAsReference, onMessage }: Props) {
+export function ResultGrid({ loading, placeholders, results, onUploadImage, onUseAsReference, onMessage }: Props) {
   const [preview, setPreview] = useState<PreviewState | null>(null)
-
-  useEffect(() => {
-    if (!preview) return
-
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setPreview(null)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [preview])
 
   const empty = !loading && results.length === 0
   if (empty) {
@@ -66,12 +45,26 @@ export function ResultGrid({ loading, placeholders, results, onUseAsReference, o
     setPreview({
       src: card.image,
       title: `生成结果 ${card.index + 1}`,
-      fileSize: formatImageSize(card.image),
+      remoteUrl: card.remoteUrl,
     })
   }
 
-  function updatePreviewDimensions(src: string, dimensions: ImageDimensions) {
-    setPreview((current) => current && current.src === src ? { ...current, dimensions } : current)
+  async function copyResultImage(src: string) {
+    try {
+      await copyImageToClipboard(src)
+      onMessage('图片已复制到剪贴板', 'ok')
+    } catch {
+      onMessage('复制失败，浏览器可能未授权剪贴板', 'error')
+    }
+  }
+
+  async function copyRemoteUrl(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      onMessage('图床 URL 已复制', 'ok')
+    } catch {
+      onMessage('复制 URL 失败，浏览器可能未授权剪贴板', 'error')
+    }
   }
 
   return (
@@ -97,42 +90,23 @@ export function ResultGrid({ loading, placeholders, results, onUseAsReference, o
                   ⛶
                 </button>
                 {card.remoteUrl ? (
-                  <button
-                    type="button"
-                    className="url-copy-btn"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(card.remoteUrl!)
-                        onMessage('图床 URL 已复制', 'ok')
-                      } catch {
-                        onMessage('复制 URL 失败，浏览器可能未授权剪贴板', 'error')
-                      }
-                    }}
-                  >
+                  <button type="button" className="url-copy-btn" onClick={() => void copyRemoteUrl(card.remoteUrl!)}>
                     复制URL
                   </button>
                 ) : card.uploading ? (
                   <button type="button" className="url-copy-btn" disabled>上传中</button>
                 ) : card.uploadError ? (
-                  <button type="button" className="url-copy-btn error" title={card.uploadError}>上传失败</button>
-                ) : null}
+                  <button type="button" className="url-copy-btn error" title={card.uploadError} onClick={() => onUploadImage(card)}>重试上传</button>
+                ) : (
+                  <button type="button" className="url-copy-btn" onClick={() => onUploadImage(card)}>上传图床</button>
+                )}
               </div>
               <div className="card-toolbar">
                 <button
                   type="button"
                   onClick={() => downloadDataUrl(card.image!, `ai-image-${Date.now()}-${card.index + 1}.png`)}
                 >下载</button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await copyImageToClipboard(card.image!)
-                      onMessage('图片已复制到剪贴板', 'ok')
-                    } catch {
-                      onMessage('复制失败，浏览器可能未授权剪贴板', 'error')
-                    }
-                  }}
-                >复制</button>
+                <button type="button" onClick={() => void copyResultImage(card.image!)}>复制</button>
                 <button type="button" onClick={() => onUseAsReference(card.image!)}>作为参考图</button>
               </div>
               <small className="card-meta">#{card.index + 1} · {card.elapsedMs ? `${(card.elapsedMs / 1000).toFixed(1)}s` : '完成'}</small>
@@ -146,65 +120,16 @@ export function ResultGrid({ loading, placeholders, results, onUseAsReference, o
           )}
         </article>
       ))}
-      {preview ? createPortal(
-        <div className="preview-mask" onMouseDown={(e) => e.target === e.currentTarget && setPreview(null)}>
-          <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.title}>
-            <button type="button" className="preview-close" onClick={() => setPreview(null)} aria-label="关闭预览">×</button>
-            <div className="preview-info">
-              <span>{formatDimensions(preview.dimensions)}</span>
-              <span>{formatActualRatio(preview.dimensions)}</span>
-              <span>{preview.fileSize}</span>
-            </div>
-            <img
-              src={preview.src}
-              alt={preview.title}
-              onLoad={(event) => updatePreviewDimensions(preview.src, {
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight,
-              })}
-            />
-          </div>
-        </div>,
-        document.body,
+      {preview ? (
+        <ImagePreviewModal
+          src={preview.src}
+          title={preview.title}
+          remoteUrl={preview.remoteUrl}
+          onCopyImage={() => copyResultImage(preview.src)}
+          onCopyRemoteUrl={preview.remoteUrl ? () => copyRemoteUrl(preview.remoteUrl!) : undefined}
+          onClose={() => setPreview(null)}
+        />
       ) : null}
     </div>
   )
-}
-
-function formatImageSize(dataUrl: string) {
-  const bytes = getDataUrlBytes(dataUrl)
-  if (!bytes) return '未知大小'
-  const mb = bytes / 1024 / 1024
-  if (mb >= 1) return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`
-}
-
-function formatDimensions(dimensions?: ImageDimensions) {
-  return dimensions ? `${dimensions.width}×${dimensions.height}` : '读取尺寸中'
-}
-
-function formatActualRatio(dimensions?: ImageDimensions) {
-  if (!dimensions) return '读取比例中'
-  const divisor = gcd(dimensions.width, dimensions.height)
-  return `${dimensions.width / divisor}:${dimensions.height / divisor}`
-}
-
-function gcd(a: number, b: number): number {
-  let x = Math.abs(a)
-  let y = Math.abs(b)
-  while (y) {
-    const next = x % y
-    x = y
-    y = next
-  }
-  return x || 1
-}
-
-function getDataUrlBytes(dataUrl: string) {
-  const marker = ';base64,'
-  const index = dataUrl.indexOf(marker)
-  if (index < 0) return new TextEncoder().encode(dataUrl).length
-  const base64 = dataUrl.slice(index + marker.length).replace(/\s/g, '')
-  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
-  return Math.max(0, Math.floor(base64.length * 3 / 4) - padding)
 }

@@ -94,6 +94,9 @@ export interface HistoryItem {
   size: string
   model: string
   images: string[]
+  imageResultIndexes?: number[]
+  remoteUrls?: string[]
+  remoteThumbUrls?: string[]
   failedCount: number
   elapsedMs: number
 }
