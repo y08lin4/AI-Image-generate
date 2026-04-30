@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { GenerateResultItem } from '../types'
 import { copyImageToClipboard, downloadDataUrl } from '../lib/api'
 
@@ -14,6 +14,20 @@ type ResultCard = { index: number; loading: true } | (GenerateResultItem & { loa
 
 export function ResultGrid({ loading, placeholders, results, onUseAsReference, onMessage }: Props) {
   const [preview, setPreview] = useState<{ src: string; title: string } | null>(null)
+
+  useEffect(() => {
+    if (!preview) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPreview(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [preview])
+
   const empty = !loading && results.length === 0
   if (empty) {
     return (
@@ -43,6 +57,15 @@ export function ResultGrid({ loading, placeholders, results, onUseAsReference, o
           ) : card.ok && card.image ? (
             <>
               <img src={card.image} alt={`生成结果 ${card.index + 1}`} />
+              <button
+                type="button"
+                className="zoom-btn"
+                onClick={() => setPreview({ src: card.image!, title: `生成结果 ${card.index + 1}` })}
+                aria-label={`放大预览第 ${card.index + 1} 张图片`}
+                title="放大预览"
+              >
+                ⛶
+              </button>
               <div className="card-toolbar">
                 <button
                   type="button"
@@ -75,7 +98,7 @@ export function ResultGrid({ loading, placeholders, results, onUseAsReference, o
       {preview ? (
         <div className="preview-mask" onMouseDown={(e) => e.target === e.currentTarget && setPreview(null)}>
           <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.title}>
-            <button type="button" className="preview-close" onClick={() => setPreview(null)} aria-label="????">?</button>
+            <button type="button" className="preview-close" onClick={() => setPreview(null)} aria-label="关闭预览">×</button>
             <img src={preview.src} alt={preview.title} />
           </div>
         </div>
