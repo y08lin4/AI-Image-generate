@@ -1,13 +1,14 @@
 ﻿import { useEffect, useState } from 'react'
-import type { AppSettings, AspectRatio, GenerationTask, GenerateResultItem, HistoryItem, InputImage, Mode } from './types'
+import type { AppSettings, AspectRatio, GenerationTask, GenerateResultItem, HistoryItem, InputImage, Mode, ResolutionTier } from './types'
 import { RatioPicker } from './components/RatioPicker'
+import { ResolutionPicker } from './components/ResolutionPicker'
 import { ImageUploader } from './components/ImageUploader'
 import { SettingsModal } from './components/SettingsModal'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TaskQueue } from './components/TaskQueue'
 import { createId, generateImagesDirect, generateImagesStream } from './lib/api'
 import { addHistory, clearHistory, deleteHistory, getHistory } from './lib/db'
-import { getRatioSize } from './lib/ratios'
+import { getImageSize, getResolutionLabel } from './lib/ratios'
 import { DEFAULT_SETTINGS, loadSettings, maskSecret, saveSettings } from './lib/storage'
 import './styles.css'
 
@@ -19,6 +20,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>('text-to-image')
   const [prompt, setPrompt] = useState('')
   const [ratio, setRatio] = useState<AspectRatio>(() => loadSettings().defaultRatio)
+  const [resolution, setResolution] = useState<ResolutionTier>(() => loadSettings().defaultResolution)
   const [inputImages, setInputImages] = useState<InputImage[]>([])
   const [tasks, setTasks] = useState<GenerationTask[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
@@ -31,6 +33,10 @@ export default function App() {
   useEffect(() => {
     setRatio(settings.defaultRatio)
   }, [settings.defaultRatio])
+
+  useEffect(() => {
+    setResolution(settings.defaultResolution)
+  }, [settings.defaultResolution])
 
   function showMessage(text: string, type: 'ok' | 'error' | 'info' = 'info') {
     setMessage({ text, type })
@@ -61,6 +67,7 @@ export default function App() {
       concurrency: Math.max(1, Math.min(6, Math.round(Number(next.concurrency) || DEFAULT_SETTINGS.concurrency))),
       timeoutSec: Math.max(10, Math.min(900, Math.round(Number(next.timeoutSec) || DEFAULT_SETTINGS.timeoutSec))),
       defaultRatio: next.defaultRatio,
+      defaultResolution: next.defaultResolution,
     }
     setSettings(normalized)
     saveSettings(normalized)
@@ -97,6 +104,7 @@ export default function App() {
       mode,
       prompt: prompt.trim(),
       ratio,
+      resolution,
       model: settings.model.trim(),
       baseUrl: settings.baseUrl.trim(),
       apiKey: settings.apiKey.trim(),
@@ -113,6 +121,7 @@ export default function App() {
       requestMode: settings.requestMode,
       prompt: payload.prompt,
       ratio,
+      resolution,
       size,
       model: payload.model,
       count: payload.count,
@@ -131,6 +140,7 @@ export default function App() {
       mode: Mode
       prompt: string
       ratio: AspectRatio
+      resolution: ResolutionTier
       model: string
       baseUrl: string
       apiKey: string
@@ -171,6 +181,7 @@ export default function App() {
           mode: payload.mode,
           prompt: payload.prompt,
           ratio: payload.ratio,
+          resolution: payload.resolution,
           size: response.size,
           model: response.model,
           images: okImages,
@@ -233,7 +244,7 @@ export default function App() {
     setTasks((prev) => prev.filter((task) => task.status === 'running'))
   }
 
-  const size = getRatioSize(ratio)
+  const size = getImageSize(ratio, resolution)
 
   return (
     <div className="app-shell">
@@ -302,7 +313,7 @@ export default function App() {
           <section className="panel">
             <div className="label-row">
               <label className="label">比例</label>
-              <span>{size}</span>
+              <span>{ratio === 'auto' ? '自动' : ratio}</span>
             </div>
             <RatioPicker
               value={ratio}
@@ -311,6 +322,21 @@ export default function App() {
                 patchSettings({ defaultRatio: next })
               }}
             />
+          </section>
+
+          <section className="panel">
+            <div className="label-row">
+              <label className="label">分辨率档位</label>
+              <span>{size}</span>
+            </div>
+            <ResolutionPicker
+              value={resolution}
+              onChange={(next) => {
+                setResolution(next)
+                patchSettings({ defaultResolution: next })
+              }}
+            />
+            <small className="hint-text">比例或分辨率选「自动」时不传 size，由上游模型自行决定。</small>
           </section>
 
           <section className="panel split-2">
@@ -333,7 +359,7 @@ export default function App() {
           <div className="canvas-header">
             <div>
               <h2>生成结果</h2>
-              <p>{mode === 'image-to-image' ? '图生图' : '文生图'} · {ratio} · {size} · {settings.requestMode === 'worker' ? 'Worker 流式代理' : '浏览器直连'} · 并发 {settings.concurrency}</p>
+              <p>{mode === 'image-to-image' ? '图生图' : '文生图'} · {ratio} · {getResolutionLabel(resolution)} · {size} · {settings.requestMode === 'worker' ? 'Worker 流式代理' : '浏览器直连'} · 并发 {settings.concurrency}</p>
             </div>
           </div>
           <TaskQueue

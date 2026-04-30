@@ -1,4 +1,5 @@
 ﻿import type { HistoryItem } from '../types'
+import { getResolutionLabel } from '../lib/ratios'
 
 interface Props {
   items: HistoryItem[]
@@ -43,7 +44,11 @@ export function HistoryPanel({ items, onReusePrompt, onUseImage, onDelete, onCle
               </div>
               <div className="history-info">
                 <p>{item.prompt}</p>
-                <small>{formatTime(item.createdAt)} · {item.mode === 'image-to-image' ? '图生图' : '文生图'} · {item.ratio} · {item.images.length} 张</small>
+                <small>
+                  {formatTime(item.createdAt)} · {item.mode === 'image-to-image' ? '图生图' : '文生图'} · {item.ratio}
+                  {item.resolution ? ` · ${getResolutionLabel(item.resolution)} · ${item.size}` : ''}
+                  {' · '}{item.images.length} 张
+                </small>
               </div>
               <div className="history-actions">
                 <button type="button" onClick={() => onReusePrompt(item.prompt)}>复用提示词</button>

@@ -127,6 +127,18 @@ code { font-size: .85em; }
 }
 .ratio-btn.active { background: #111827; color: white; border-color: #111827; }
 .ratio-icon { border: 1.7px solid currentColor; border-radius: 3px; display: block; }
+.resolution-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.resolution-btn {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 12px;
+  padding: 10px 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+.resolution-btn.active { background: #111827; color: white; border-color: #111827; }
+.hint-text { display: block; margin-top: 8px; color: var(--muted-2); font-size: 12px; line-height: 1.5; }
 
 .generate-btn, .primary-btn, .secondary-btn, .ghost-btn, .icon-btn {
   border: 0;
@@ -425,6 +437,7 @@ code { font-size: .85em; }
   .sidebar { position: static; }
   .settings-grid { grid-template-columns: 1fr; }
   .ratio-list { grid-template-columns: repeat(3, 1fr); }
+  .resolution-list { grid-template-columns: repeat(2, 1fr); }
   .config-pill { align-items: flex-start; }
   .task-header { flex-direction: column; }
   .task-meta { align-items: flex-start; white-space: normal; }

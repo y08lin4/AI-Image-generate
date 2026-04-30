@@ -1,4 +1,5 @@
 import type { GenerationTask } from '../types'
+import { getResolutionLabel } from '../lib/ratios'
 import { ResultGrid } from './ResultGrid'
 
 interface Props {
@@ -56,7 +57,7 @@ export function TaskQueue({ tasks, onUseAsReference, onMessage, onRemove, onClea
             <header className="task-header">
               <div className="task-title">
                 <div>
-                  <strong>{task.mode === 'image-to-image' ? '图生图' : '文生图'} · {task.ratio} · {task.size}</strong>
+                  <strong>{task.mode === 'image-to-image' ? '图生图' : '文生图'} · {task.ratio} · {getResolutionLabel(task.resolution)} · {task.size}</strong>
                   <p>{task.prompt}</p>
                 </div>
               </div>

@@ -7,7 +7,7 @@ import type {
   InputImage,
   StreamEvent,
 } from '../types'
-import { getRatioSize, isFixedRatio, RATIO_SIZE } from './ratios'
+import { getImageSize } from './ratios'
 
 export function createId(prefix = 'id') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -59,7 +59,8 @@ export async function generateImagesStream(
   let meta = {
     mode: payload.mode,
     ratio: payload.ratio,
-    size: getRatioSize(payload.ratio),
+    resolution: payload.resolution,
+    size: getImageSize(payload.ratio, payload.resolution),
     model: payload.model,
   }
   let elapsedMs = 0
@@ -89,6 +90,7 @@ export async function generateImagesStream(
       meta = {
         mode: event.data.mode,
         ratio: event.data.ratio,
+        resolution: event.data.resolution,
         size: event.data.size,
         model: event.data.model,
       }
@@ -147,7 +149,8 @@ export async function generateImagesDirect(
     ok: true,
     mode: normalizedPayload.mode,
     ratio: normalizedPayload.ratio,
-    size: getRatioSize(normalizedPayload.ratio),
+    resolution: normalizedPayload.resolution,
+    size: getImageSize(normalizedPayload.ratio, normalizedPayload.resolution),
     model: normalizedPayload.model,
     elapsedMs: Date.now() - startedAt,
     results,
@@ -232,7 +235,8 @@ async function callTextImageDirect(payload: GenerateRequest, signal: AbortSignal
     n: 1,
     response_format: 'b64_json',
   }
-  if (isFixedRatio(payload.ratio)) body.size = RATIO_SIZE[payload.ratio]
+  const size = getRequestedSize(payload)
+  if (size) body.size = size
 
   return fetch(buildUpstreamUrl(payload.baseUrl, 'images/generations'), {
     method: 'POST',
@@ -253,7 +257,8 @@ async function callImageEditDirect(payload: GenerateRequest, signal: AbortSignal
   const form = new FormData()
   form.append('model', payload.model)
   form.append('prompt', payload.prompt)
-  if (isFixedRatio(payload.ratio)) form.append('size', RATIO_SIZE[payload.ratio])
+  const size = getRequestedSize(payload)
+  if (size) form.append('size', size)
   form.append('n', '1')
   form.append('response_format', 'b64_json')
 
@@ -322,6 +327,11 @@ function buildUpstreamUrl(baseUrl: string, path: string) {
 function clamp(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback
   return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function getRequestedSize(payload: Pick<GenerateRequest, 'ratio' | 'resolution'>) {
+  const size = getImageSize(payload.ratio, payload.resolution)
+  return size === '自动' ? undefined : size
 }
 
 function formatFetchError(message: string) {

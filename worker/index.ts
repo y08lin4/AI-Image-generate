@@ -1,4 +1,4 @@
-import type { AspectRatio, Ratio } from '../src/types'
+import type { AspectRatio, Ratio, ResolutionTier } from '../src/types'
 
 interface Env {
   ASSETS: Fetcher
@@ -20,6 +20,7 @@ interface GeneratePayload {
   mode?: Mode
   prompt?: string
   ratio?: AspectRatio
+  resolution?: ResolutionTier
   model?: string
   baseUrl?: string
   apiKey?: string
@@ -34,6 +35,7 @@ interface NormalizedPayload {
   mode: Mode
   prompt: string
   ratio: AspectRatio
+  resolution: ResolutionTier
   size: string
   model: string
   baseUrl: string
@@ -54,22 +56,46 @@ interface ResultItem {
   elapsedMs?: number
 }
 
-const RATIO_SIZE: Record<Ratio, string> = {
-  '1:1': '1024x1024',
-  '2:3': '1024x1536',
-  '3:2': '1536x1024',
-  '3:4': '768x1024',
-  '4:3': '1024x768',
-  '9:16': '1008x1792',
-  '16:9': '1792x1008',
+const SIZE_MAP: Record<Exclude<ResolutionTier, 'auto'>, Record<Ratio, string>> = {
+  standard: {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+    '3:4': '768x1024',
+    '4:3': '1024x768',
+    '9:16': '1008x1792',
+    '16:9': '1792x1008',
+  },
+  '2k': {
+    '1:1': '2048x2048',
+    '2:3': '1344x2016',
+    '3:2': '2016x1344',
+    '3:4': '1536x2048',
+    '4:3': '2048x1536',
+    '9:16': '1152x2048',
+    '16:9': '2048x1152',
+  },
+  '4k': {
+    '1:1': '2880x2880',
+    '2:3': '2336x3504',
+    '3:2': '3504x2336',
+    '3:4': '2448x3264',
+    '4:3': '3264x2448',
+    '9:16': '2160x3840',
+    '16:9': '3840x2160',
+  },
 }
 
 function isFixedRatio(ratio: AspectRatio): ratio is Ratio {
   return ratio !== 'auto'
 }
 
-function getRatioSize(ratio: AspectRatio) {
-  return isFixedRatio(ratio) ? RATIO_SIZE[ratio] : '自动'
+function isFixedResolution(resolution: ResolutionTier): resolution is Exclude<ResolutionTier, 'auto'> {
+  return resolution !== 'auto'
+}
+
+function getImageSize(ratio: AspectRatio, resolution: ResolutionTier) {
+  return isFixedRatio(ratio) && isFixedResolution(resolution) ? SIZE_MAP[resolution][ratio] : '自动'
 }
 
 const CORS_HEADERS = {
@@ -160,6 +186,7 @@ async function streamGenerate(writer: WritableStreamDefaultWriter<Uint8Array>, d
     await send('start', {
       mode: data.mode,
       ratio: data.ratio,
+      resolution: data.resolution,
       size: data.size,
       model: data.model,
       count: data.count,
@@ -211,7 +238,8 @@ function normalizePayload(payload: GeneratePayload, env: Env): NormalizedPayload
   const mode = payload.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image'
   const prompt = String(payload.prompt || '').trim()
   const ratio = isRatio(payload.ratio) ? payload.ratio : 'auto'
-  const size = getRatioSize(ratio)
+  const resolution = isResolution(payload.resolution) ? payload.resolution : 'standard'
+  const size = getImageSize(ratio, resolution)
   const model = String(payload.model || '').trim()
   const baseUrl = normalizeBaseUrl(String(payload.baseUrl || '').trim(), env)
   const apiKey = String(payload.apiKey || '').trim()
@@ -225,7 +253,7 @@ function normalizePayload(payload: GeneratePayload, env: Env): NormalizedPayload
   if (!apiKey) throw new Error('API Key 不能为空')
   if (mode === 'image-to-image' && inputImages.length === 0) throw new Error('图生图模式缺少参考图')
 
-  return { mode, prompt, ratio, size, model, baseUrl, apiKey, timeoutSec, count, concurrency, inputImages }
+  return { mode, prompt, ratio, resolution, size, model, baseUrl, apiKey, timeoutSec, count, concurrency, inputImages }
 }
 
 function normalizeInputImages(payload: GeneratePayload) {
@@ -269,8 +297,12 @@ function normalizeBaseUrl(value: string, env: Env) {
   return trimmed
 }
 
-function isRatio(value: unknown): value is Ratio {
-  return value === 'auto' || (typeof value === 'string' && Object.prototype.hasOwnProperty.call(RATIO_SIZE, value))
+function isRatio(value: unknown): value is AspectRatio {
+  return value === 'auto' || (typeof value === 'string' && Object.prototype.hasOwnProperty.call(SIZE_MAP.standard, value))
+}
+
+function isResolution(value: unknown): value is ResolutionTier {
+  return value === 'auto' || value === 'standard' || value === '2k' || value === '4k'
 }
 
 function clamp(value: number, min: number, max: number, fallback: number) {
@@ -377,7 +409,7 @@ async function callTextImage(payload: NormalizedPayload, signal: AbortSignal) {
     n: 1,
     response_format: 'b64_json',
   }
-  if (isFixedRatio(payload.ratio)) body.size = payload.size
+  if (payload.size !== '自动') body.size = payload.size
 
   return fetch(buildUpstreamUrl(payload.baseUrl, 'images/generations'), {
     method: 'POST',
@@ -397,7 +429,7 @@ async function callImageEdit(payload: NormalizedPayload, signal: AbortSignal) {
   const form = new FormData()
   form.append('model', payload.model)
   form.append('prompt', payload.prompt)
-  if (isFixedRatio(payload.ratio)) form.append('size', payload.size)
+  if (payload.size !== '自动') form.append('size', payload.size)
   form.append('n', '1')
   form.append('response_format', 'b64_json')
   for (let index = 0; index < payload.inputImages.length; index += 1) {

@@ -6,6 +6,8 @@ export type Ratio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9'
 
 export type AspectRatio = 'auto' | Ratio
 
+export type ResolutionTier = 'auto' | 'standard' | '2k' | '4k'
+
 export interface AppSettings {
   requestMode: RequestMode
   baseUrl: string
@@ -16,6 +18,7 @@ export interface AppSettings {
   count: number
   concurrency: number
   defaultRatio: AspectRatio
+  defaultResolution: ResolutionTier
   rememberSecrets: boolean
 }
 
@@ -31,6 +34,7 @@ export interface GenerateRequest {
   mode: Mode
   prompt: string
   ratio: AspectRatio
+  resolution: ResolutionTier
   model: string
   baseUrl: string
   apiKey: string
@@ -54,6 +58,7 @@ export interface GenerateSuccessResponse {
   ok: true
   mode: Mode
   ratio: AspectRatio
+  resolution: ResolutionTier
   size: string
   model: string
   elapsedMs: number
@@ -68,7 +73,7 @@ export interface GenerateErrorResponse {
 }
 
 export type StreamEvent =
-  | { event: 'start'; data: { mode: Mode; ratio: AspectRatio; size: string; model: string; count: number } }
+  | { event: 'start'; data: { mode: Mode; ratio: AspectRatio; resolution: ResolutionTier; size: string; model: string; count: number } }
   | { event: 'ping'; data: { time: number } }
   | { event: 'result'; data: GenerateResultItem }
   | { event: 'done'; data: { ok: true; elapsedMs: number } }
@@ -80,6 +85,7 @@ export interface HistoryItem {
   mode: Mode
   prompt: string
   ratio: AspectRatio
+  resolution?: ResolutionTier
   size: string
   model: string
   images: string[]
@@ -96,6 +102,7 @@ export interface GenerationTask {
   requestMode: RequestMode
   prompt: string
   ratio: AspectRatio
+  resolution: ResolutionTier
   size: string
   model: string
   count: number
