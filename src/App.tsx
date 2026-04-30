@@ -9,7 +9,7 @@ import { TaskQueue } from './components/TaskQueue'
 import { createId, generateImagesDirect, generateImagesStream, uploadImageToPixhost } from './lib/api'
 import { addHistory, clearHistory, deleteHistory, getHistory } from './lib/db'
 import { getImageSize, getResolutionLabel } from './lib/ratios'
-import { DEFAULT_SETTINGS, loadSettings, maskSecret, saveSettings } from './lib/storage'
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
 import './styles.css'
 
 type Message = { text: string; type: 'ok' | 'error' | 'info' } | null
@@ -24,6 +24,7 @@ export default function App() {
   const [inputImages, setInputImages] = useState<InputImage[]>([])
   const [tasks, setTasks] = useState<GenerationTask[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
+  const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [message, setMessage] = useState<Message>(null)
 
   useEffect(() => {
@@ -310,8 +311,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className="config-pill" title={settings.baseUrl}>
-            <span>{settings.model || '未设置模型'}</span>
-            <small>{settings.requestMode === 'worker' ? 'Worker 代理' : '浏览器直连'} · {maskSecret(settings.apiKey)}</small>
+            <span>{settings.requestMode === 'worker' ? 'Worker 代理' : '浏览器直连'}</span>
           </div>
           <button type="button" className="secondary-btn" onClick={() => setSettingsOpen(true)}>设置</button>
         </div>
@@ -324,7 +324,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <main className="workspace">
+      <main className={`workspace ${historyCollapsed ? 'history-collapsed' : ''}`}>
         <aside className="sidebar">
           <section className="panel">
             <label className="label">模式</label>
@@ -379,7 +379,7 @@ export default function App() {
           <section className="panel">
             <div className="label-row">
               <label className="label">分辨率档位</label>
-              <span>{size}</span>
+              <span>{getResolutionLabel(resolution)}</span>
             </div>
             <ResolutionPicker
               value={resolution}
@@ -425,6 +425,8 @@ export default function App() {
 
         <HistoryPanel
           items={history}
+          collapsed={historyCollapsed}
+          onToggleCollapsed={() => setHistoryCollapsed((prev) => !prev)}
           onReusePrompt={(value) => {
             setPrompt(value)
             showMessage('提示词已复用', 'ok')

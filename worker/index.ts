@@ -533,6 +533,7 @@ async function callImageEdit(payload: NormalizedPayload, signal: AbortSignal) {
 }
 
 async function readUpstreamError(response: Response) {
+  if (response.status === 524) return formatCloudflare524Error()
   const contentType = response.headers.get('Content-Type') || ''
   try {
     if (contentType.includes('application/json')) {
@@ -543,10 +544,15 @@ async function readUpstreamError(response: Response) {
       return JSON.stringify(data).slice(0, 800)
     }
     const text = await response.text()
+    if (/524|cloudflare/i.test(text)) return formatCloudflare524Error()
     return text.slice(0, 800) || `HTTP ${response.status}`
   } catch {
     return `HTTP ${response.status}`
   }
+}
+
+function formatCloudflare524Error() {
+  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名或改用非 Cloudflare 中转后重试'
 }
 
 async function parseImageResponse(response: Response, signal: AbortSignal): Promise<{ image?: string; mime?: string }> {

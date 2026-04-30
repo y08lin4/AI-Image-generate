@@ -76,6 +76,8 @@ export function TaskQueue({ tasks, onUseAsReference, onMessage, onRemove, onClea
               loading={task.status === 'running'}
               placeholders={task.count}
               results={task.results}
+              ratio={task.ratio}
+              resolution={task.resolution}
               onUseAsReference={onUseAsReference}
               onMessage={onMessage}
             />

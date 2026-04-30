@@ -1,8 +1,10 @@
-﻿import type { HistoryItem } from '../types'
+import type { HistoryItem } from '../types'
 import { getResolutionLabel } from '../lib/ratios'
 
 interface Props {
   items: HistoryItem[]
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onReusePrompt: (prompt: string) => void
   onUseImage: (dataUrl: string) => void
   onDelete: (id: string) => void
@@ -18,7 +20,18 @@ function formatTime(ts: number) {
   })
 }
 
-export function HistoryPanel({ items, onReusePrompt, onUseImage, onDelete, onClear }: Props) {
+export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePrompt, onUseImage, onDelete, onClear }: Props) {
+  if (collapsed) {
+    return (
+      <aside className="history-panel collapsed">
+        <button type="button" className="history-expand-btn" onClick={onToggleCollapsed} title="展开本地历史">
+          <span>历史</span>
+          <small>{items.length}</small>
+        </button>
+      </aside>
+    )
+  }
+
   return (
     <aside className="history-panel">
       <header className="history-header">
@@ -26,7 +39,10 @@ export function HistoryPanel({ items, onReusePrompt, onUseImage, onDelete, onCle
           <h2>本地历史</h2>
           <p>保存在 IndexedDB，不上传服务器。</p>
         </div>
-        <button type="button" className="ghost-btn small" onClick={onClear} disabled={!items.length}>清空</button>
+        <div className="history-header-actions">
+          <button type="button" className="ghost-btn small" onClick={onToggleCollapsed}>收起</button>
+          <button type="button" className="ghost-btn small" onClick={onClear} disabled={!items.length}>清空</button>
+        </div>
       </header>
 
       {items.length === 0 ? (

@@ -364,6 +364,7 @@ function getRequestedSize(payload: Pick<GenerateRequest, 'ratio' | 'resolution'>
 
 function formatFetchError(message: string) {
   if (/abort|timeout|operation was aborted/i.test(message)) return '请求超时'
+  if (/524|cloudflare/i.test(message)) return formatCloudflare524Error()
   if (/failed to fetch|load failed|networkerror/i.test(message)) {
     return '浏览器直连失败，可能是 CORS、网络或混合内容限制；建议切换到 Worker 代理'
   }
@@ -371,6 +372,9 @@ function formatFetchError(message: string) {
 }
 
 async function parseErrorResponse(response: Response): Promise<GenerateErrorResponse> {
+  if (response.status === 524) {
+    return { ok: false, type: 'upstream_error', message: formatCloudflare524Error(), status: 524 }
+  }
   const data = await response.json().catch(() => null) as GenerateErrorResponse | null
   return data?.ok === false
     ? data
@@ -378,6 +382,7 @@ async function parseErrorResponse(response: Response): Promise<GenerateErrorResp
 }
 
 async function readUpstreamError(response: Response) {
+  if (response.status === 524) return formatCloudflare524Error()
   const contentType = response.headers.get('Content-Type') || ''
   try {
     if (contentType.includes('application/json')) {
@@ -388,10 +393,15 @@ async function readUpstreamError(response: Response) {
       return JSON.stringify(data).slice(0, 800)
     }
     const text = await response.text()
+    if (/524|cloudflare/i.test(text)) return formatCloudflare524Error()
     return text.slice(0, 800) || `HTTP ${response.status}`
   } catch {
     return `HTTP ${response.status}`
   }
+}
+
+function formatCloudflare524Error() {
+  return 'HTTP 524：Cloudflare 100 秒自动熔断，可切换其他线路域名或改用非 Cloudflare 中转后重试'
 }
 
 async function parseImageResponse(response: Response, signal: AbortSignal): Promise<{ image?: string; mime?: string }> {
