@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { GenerateResultItem } from '../types'
+import type { AspectRatio, GenerateResultItem, ResolutionTier } from '../types'
 import { copyImageToClipboard, copyTextToClipboard, downloadDataUrl, getImageProxyUrl } from '../lib/api'
 import { ImagePreviewModal } from './ImagePreviewModal'
 
@@ -7,6 +7,9 @@ interface Props {
   loading: boolean
   placeholders: number
   results: GenerateResultItem[]
+  ratio: AspectRatio
+  resolution: ResolutionTier
+  size: string
   onUploadImage: (result: GenerateResultItem) => void
   onUseAsReference: (dataUrl: string) => void
   onMessage: (message: string, type?: 'ok' | 'error') => void
@@ -16,11 +19,14 @@ type PreviewState = {
   src: string
   title: string
   remoteUrl?: string
+  ratio: AspectRatio
+  resolution: ResolutionTier
+  size: string
 }
 
 type ResultCard = { index: number; loading: true } | (GenerateResultItem & { loading: false })
 
-export function ResultGrid({ loading, placeholders, results, onUploadImage, onUseAsReference, onMessage }: Props) {
+export function ResultGrid({ loading, placeholders, results, ratio, resolution, size, onUploadImage, onUseAsReference, onMessage }: Props) {
   const [preview, setPreview] = useState<PreviewState | null>(null)
 
   const empty = !loading && results.length === 0
@@ -47,6 +53,9 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
       src: getImageProxyUrl(src),
       title: `生成结果 ${card.index + 1}`,
       remoteUrl: card.remoteUrl,
+      ratio,
+      resolution,
+      size,
     })
   }
 
@@ -108,6 +117,8 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
                   <button type="button" className="url-copy-btn" onClick={() => void copyRemoteUrl(card.remoteUrl!)}>
                     复制URL
                   </button>
+                ) : card.localImageUrl || card.localImageBytes ? (
+                  <button type="button" className="url-copy-btn" disabled title={card.uploadError || '图片超过 PiXhost 10MB，已原图回传到本地'}>本地图</button>
                 ) : card.uploading ? (
                   <button type="button" className="url-copy-btn" disabled>上传中</button>
                 ) : card.uploadError ? (
@@ -145,6 +156,9 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
           src={preview.src}
           title={preview.title}
           remoteUrl={preview.remoteUrl}
+          ratio={preview.ratio}
+          resolution={preview.resolution}
+          requestedSize={preview.size}
           onCopyImage={() => copyResultImage(preview.src)}
           onCopyRemoteUrl={preview.remoteUrl ? () => copyRemoteUrl(preview.remoteUrl!) : undefined}
           onClose={() => setPreview(null)}
@@ -155,5 +169,5 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
 }
 
 function isUploadOnlyFailure(result: GenerateResultItem) {
-  return Boolean(result.uploadError || /生成成功但上传|上传 PiXhost 失败|PiXhost/.test(result.error || ''))
+  return Boolean(!result.localImageUrl && (result.uploadError || /生成成功但上传|上传 PiXhost 失败|PiXhost/.test(result.error || '')))
 }

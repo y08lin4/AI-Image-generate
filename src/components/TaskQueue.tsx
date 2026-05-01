@@ -116,6 +116,9 @@ export function TaskQueue({
               loading={task.status === 'running'}
               placeholders={task.count}
               results={task.results}
+              ratio={task.ratio}
+              resolution={task.resolution}
+              size={task.size}
               onUploadImage={(result) => onUploadImage(task.id, result)}
               onUseAsReference={onUseAsReference}
               onMessage={onMessage}

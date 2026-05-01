@@ -6,7 +6,7 @@ import { ImageUploader } from './components/ImageUploader'
 import { SettingsModal } from './components/SettingsModal'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TaskQueue } from './components/TaskQueue'
-import { createBackgroundTask, createId, generateImagesDirect, generateImagesStream, getBackgroundStats, getBackgroundTask, listBackgroundTasks, retryBackgroundTask, uploadImageToPixhost } from './lib/api'
+import { createBackgroundTask, createId, fetchBackgroundTaskImage, generateImagesDirect, generateImagesStream, getBackgroundStats, getBackgroundTask, listBackgroundTasks, retryBackgroundTask, uploadImageToPixhost } from './lib/api'
 import { addHistory, clearHistory, deleteHistory, getHistory, updateHistoryImageUrl } from './lib/db'
 import { getAvailableRatios, getImageSize, getResolutionLabel, normalizeRatioForResolution } from './lib/ratios'
 import { addActiveBackgroundTask, loadActiveBackgroundTasks, removeActiveBackgroundTask, DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
@@ -224,18 +224,45 @@ export default function App() {
     await refreshHistory()
   }
 
+  async function hydrateCloudTaskLocalImages(task: BackgroundTask): Promise<BackgroundTask> {
+    const password = settingsRef.current.accessPassword.trim()
+    if (!password || !task.results.some((item) => item.localImageUrl && !item.image)) return task
+
+    const hydratedResults = await Promise.all(task.results.map(async (item) => {
+      if (!item.localImageUrl || item.image) return item
+      try {
+        const local = await fetchBackgroundTaskImage(item.localImageUrl, password)
+        return {
+          ...item,
+          image: local.dataUrl,
+          mime: local.mime,
+          localImageBytes: item.localImageBytes || local.size,
+        }
+      } catch (error) {
+        return {
+          ...item,
+          ok: false,
+          error: error instanceof Error ? error.message : '本地回传图片下载失败',
+        }
+      }
+    }))
+
+    return { ...task, results: hydratedResults }
+  }
+
   async function applyCloudTask(task: BackgroundTask) {
-    upsertTask(cloudTaskToGenerationTask(task))
-    if (isCloudTaskFinished(task)) {
-      removeActiveBackgroundTask(task.id)
+    const hydratedTask = await hydrateCloudTaskLocalImages(task)
+    upsertTask(cloudTaskToGenerationTask(hydratedTask))
+    if (isCloudTaskFinished(hydratedTask)) {
+      removeActiveBackgroundTask(hydratedTask.id)
       const timer = pollTimersRef.current.get(task.id)
       if (timer) window.clearTimeout(timer)
       pollTimersRef.current.delete(task.id)
-      await saveCloudTaskToHistory(task)
+      await saveCloudTaskToHistory(hydratedTask)
       await refreshBackgroundStats()
     } else {
-      addActiveBackgroundTask(task.id, task.createdAt)
-      startBackgroundPolling(task.id)
+      addActiveBackgroundTask(hydratedTask.id, hydratedTask.createdAt)
+      startBackgroundPolling(hydratedTask.id)
     }
   }
 
@@ -730,7 +757,7 @@ export default function App() {
                 patchSettings({ defaultResolution: next, defaultRatio: nextRatio })
               }}
             />
-            <small className="hint-text">先选分辨率，再选比例。分辨率选「自动」时比例只能自动，不传 size。</small>
+            <small className="hint-text">先选分辨率，再选比例。分辨率选「自动」时，比例也可以固定；固定比例会按标准档尺寸传给接口。</small>
           </section>
 
           <section className="panel">
@@ -747,7 +774,7 @@ export default function App() {
               }}
             />
             <small className="hint-text">
-              当前请求尺寸：{size}。固定分辨率会强制选择比例，避免「4K + 自动比例」实际不传 size。
+              当前请求尺寸：{size}。只有「分辨率=自动」且「比例=自动」时才不传 size；只要选择具体比例就会传实际尺寸，避免 16:9 变成竖图。
             </small>
           </section>
 

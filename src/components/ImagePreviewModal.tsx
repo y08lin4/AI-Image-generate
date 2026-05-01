@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { AspectRatio, ResolutionTier } from '../types'
+import { getResolutionLabel } from '../lib/ratios'
 
 interface Props {
   src: string
   title: string
   remoteUrl?: string
+  ratio?: AspectRatio
+  resolution?: ResolutionTier
+  requestedSize?: string
   onCopyImage?: () => void | Promise<void>
   onCopyRemoteUrl?: () => void | Promise<void>
   onClose: () => void
@@ -12,7 +17,7 @@ interface Props {
 
 type ImageDimensions = { width: number; height: number }
 
-export function ImagePreviewModal({ src, title, remoteUrl, onCopyImage, onCopyRemoteUrl, onClose }: Props) {
+export function ImagePreviewModal({ src, title, remoteUrl, ratio, resolution, requestedSize, onCopyImage, onCopyRemoteUrl, onClose }: Props) {
   const [dimensions, setDimensions] = useState<ImageDimensions | undefined>()
 
   useEffect(() => {
@@ -41,8 +46,8 @@ export function ImagePreviewModal({ src, title, remoteUrl, onCopyImage, onCopyRe
       <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={title}>
         <button type="button" className="preview-close" onClick={onClose} aria-label="关闭预览">×</button>
         <div className="preview-info">
-          <span>{formatDimensions(dimensions)}</span>
-          <span>{formatActualRatio(dimensions)}</span>
+          <span>{formatResolution(dimensions, resolution, requestedSize)}</span>
+          <span>{formatRatio(dimensions, ratio)}</span>
           <span>{formatImageSize(src)}</span>
         </div>
         {hasActions ? (
@@ -77,21 +82,16 @@ function formatDimensions(dimensions?: ImageDimensions) {
   return dimensions ? `${dimensions.width}×${dimensions.height}` : '读取尺寸中'
 }
 
-function formatActualRatio(dimensions?: ImageDimensions) {
-  if (!dimensions) return '读取比例中'
-  const divisor = gcd(dimensions.width, dimensions.height)
-  return `${dimensions.width / divisor}:${dimensions.height / divisor}`
+function formatResolution(dimensions?: ImageDimensions, resolution?: ResolutionTier, requestedSize?: string) {
+  if (resolution && resolution !== 'auto') return getResolutionLabel(resolution)
+  if (requestedSize && requestedSize !== '自动') return requestedSize
+  return formatDimensions(dimensions)
 }
 
-function gcd(a: number, b: number): number {
-  let x = Math.abs(a)
-  let y = Math.abs(b)
-  while (y) {
-    const next = x % y
-    x = y
-    y = next
-  }
-  return x || 1
+function formatRatio(dimensions?: ImageDimensions, ratio?: AspectRatio) {
+  if (ratio && ratio !== 'auto') return ratio
+  if (!dimensions) return '读取比例中'
+  return `${dimensions.width}:${dimensions.height}`
 }
 
 function getDataUrlBytes(dataUrl: string) {

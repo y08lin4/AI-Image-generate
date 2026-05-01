@@ -90,6 +90,8 @@ interface ResultItem {
   elapsedMs?: number
   remoteUrl?: string
   remoteThumbUrl?: string
+  localImageUrl?: string
+  localImageBytes?: number
   uploading?: boolean
   uploadError?: string
 }
@@ -135,6 +137,13 @@ interface TaskRow {
   completed_at: number | null
 }
 
+interface TaskImageChunkRow {
+  data: string
+  mime: string
+  total_chunks: number
+  byte_size: number
+}
+
 const SIZE_MAP: Record<Exclude<ResolutionTier, 'auto'>, Record<Ratio, string>> = {
   standard: {
     '1:1': '1024x1024',
@@ -174,7 +183,8 @@ function isFixedResolution(resolution: ResolutionTier): resolution is Exclude<Re
 }
 
 function getImageSize(ratio: AspectRatio, resolution: ResolutionTier) {
-  return isFixedRatio(ratio) && isFixedResolution(resolution) ? SIZE_MAP[resolution][ratio] : '自动'
+  if (!isFixedRatio(ratio)) return '自动'
+  return SIZE_MAP[isFixedResolution(resolution) ? resolution : 'standard'][ratio]
 }
 
 const CORS_HEADERS = {
@@ -245,6 +255,14 @@ export default {
       return handleRetryBackgroundTask(decodeURIComponent(retryMatch[1]), request, env)
     }
 
+    const taskImageMatch = url.pathname.match(/^\/api\/background-tasks\/([^/]+)\/images\/(\d+)$/)
+    if (taskImageMatch) {
+      const auth = requireAccessPassword(request, env)
+      if (auth) return auth
+      if (request.method !== 'GET') return jsonError('bad_request', '仅支持 GET 请求', 405)
+      return handleGetTaskImage(decodeURIComponent(taskImageMatch[1]), Number(taskImageMatch[2]), env)
+    }
+
     const taskMatch = url.pathname.match(/^\/api\/background-tasks\/([^/]+)$/)
     if (taskMatch) {
       const auth = requireAccessPassword(request, env)
@@ -280,7 +298,7 @@ export class ImageWorkflow extends WorkflowEntrypoint<Env, ImageWorkflowParams> 
       }, async () => {
         const generatedResults: ResultItem[] = []
         const tasks = Array.from({ length: payload.count }, (_, index) => async () => {
-          const result = await generateOneAndUpload(payload, index)
+          const result = await generateOneAndUpload(payload, index, db, taskId)
           generatedResults[index] = result
           await updateTaskResults(db, taskId, 'uploading', generatedResults.filter(Boolean))
           return result
@@ -289,7 +307,7 @@ export class ImageWorkflow extends WorkflowEntrypoint<Env, ImageWorkflowParams> 
         return generatedResults.filter(Boolean)
       })
 
-      const okCount = results.filter((item) => item.ok && item.remoteUrl).length
+      const okCount = results.filter((item) => item.ok && (item.remoteUrl || item.localImageUrl)).length
       const status: BackgroundTaskStatus = okCount === payload.count ? 'completed' : okCount > 0 ? 'partial_failed' : 'failed'
       const error = status === 'failed'
         ? results.map((item) => item.error || item.uploadError).filter(Boolean).join('；').slice(0, 800) || '后台任务失败'
@@ -493,6 +511,45 @@ async function handleGetBackgroundTask(taskId: string, env: Env) {
   return json({ ok: true, task })
 }
 
+async function handleGetTaskImage(taskId: string, index: number, env: Env) {
+  const bindingError = ensureDbBinding(env)
+  if (bindingError) return bindingError
+  await ensureSchema(env)
+  if (!Number.isInteger(index) || index < 0) return jsonError('bad_request', '图片序号无效', 400)
+
+  const db = requireDb(env)
+  const task = await getTaskRow(db, taskId)
+  if (!task) return jsonError('bad_request', '后台任务不存在', 404)
+
+  const first = await db.prepare(
+    'SELECT data, mime, total_chunks, byte_size FROM task_image_chunks WHERE task_id = ? AND result_index = ? AND chunk_index = 0',
+  ).bind(taskId, index).first<TaskImageChunkRow>()
+  if (!first) return jsonError('bad_request', '本地回传图片不存在或已清理', 404)
+
+  const totalChunks = Number(first.total_chunks)
+  const chunks = new Array<string>(totalChunks)
+  chunks[0] = first.data
+  for (let chunkIndex = 1; chunkIndex < totalChunks; chunkIndex += 1) {
+    const row = await db.prepare(
+      'SELECT data, mime, total_chunks, byte_size FROM task_image_chunks WHERE task_id = ? AND result_index = ? AND chunk_index = ?',
+    ).bind(taskId, index, chunkIndex).first<TaskImageChunkRow>()
+    if (!row) return jsonError('internal_error', '本地回传图片分片不完整', 500)
+    chunks[chunkIndex] = row.data
+  }
+
+  const base64 = chunks.join('')
+  const bytes = base64ToBytes(base64)
+  return new Response(bytes, {
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': first.mime || 'image/png',
+      'Content-Length': String(bytes.byteLength),
+      'Cache-Control': 'private, max-age=86400',
+      'Content-Disposition': `inline; filename="ai-image-${taskId}-${index + 1}.${mimeToExtension(first.mime)}"`,
+    },
+  })
+}
+
 async function handleListBackgroundTasks(request: Request, env: Env) {
   const bindingError = ensureDbBinding(env)
   if (bindingError) return bindingError
@@ -596,7 +653,7 @@ function normalizePayload(payload: GeneratePayload, env: Env): NormalizedPayload
   const prompt = String(payload.prompt || '').trim()
   const resolution = isResolution(payload.resolution) ? payload.resolution : 'standard'
   const rawRatio = isRatio(payload.ratio) ? payload.ratio : 'auto'
-  const ratio = resolution === 'auto' ? 'auto' : rawRatio === 'auto' ? '1:1' : rawRatio
+  const ratio = resolution === 'auto' ? rawRatio : rawRatio === 'auto' ? '1:1' : rawRatio
   const size = getImageSize(ratio, resolution)
   const model = String(payload.model || '').trim()
   const baseUrl = normalizeBaseUrl(String(payload.baseUrl || '').trim(), env)
@@ -708,7 +765,7 @@ async function generateOne(payload: NormalizedPayload | WorkflowPayload, index: 
   }
 }
 
-async function generateOneAndUpload(payload: WorkflowPayload, index: number): Promise<ResultItem> {
+async function generateOneAndUpload(payload: WorkflowPayload, index: number, db?: D1Database, taskId?: string): Promise<ResultItem> {
   const startedAt = Date.now()
   const generated = await generateOne(payload, index)
   if (!generated.ok || !generated.image) return stripImage(generated)
@@ -717,6 +774,18 @@ async function generateOneAndUpload(payload: WorkflowPayload, index: number): Pr
     return { index, ok: true, mime: generated.mime, elapsedMs: Date.now() - startedAt, remoteUrl: uploaded.showUrl, remoteThumbUrl: uploaded.thumbUrl }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'PiXhost 上传失败'
+    if (db && taskId && /10MB|最大\s*10/i.test(message)) {
+      const stored = await storeTaskImageForLocalFetch(db, taskId, index, generated.image, generated.mime || 'image/png')
+      return {
+        index,
+        ok: true,
+        mime: stored.mime,
+        elapsedMs: Date.now() - startedAt,
+        localImageUrl: `/api/background-tasks/${encodeURIComponent(taskId)}/images/${index}`,
+        localImageBytes: stored.byteSize,
+        uploadError: message,
+      }
+    }
     return { index, ok: false, mime: generated.mime, elapsedMs: Date.now() - startedAt, error: `生成成功但上传 PiXhost 失败：${message}`, uploadError: message }
   }
 }
@@ -951,6 +1020,25 @@ function dataUrlToBlob(dataUrl: string): { blob: Blob; mime: string } {
   return { blob: new Blob([bytes], { type: mime }), mime }
 }
 
+function parseDataUrlParts(dataUrl: string, fallbackMime = 'image/png') {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s)
+  if (!match) throw new Error('图片 data URL 无效')
+  const mime = match[1] || fallbackMime
+  const isBase64 = Boolean(match[2])
+  const payload = match[3] || ''
+  const base64 = isBase64 ? payload.replace(/\s/g, '') : bytesToBase64(new TextEncoder().encode(decodeURIComponent(payload)))
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  const byteSize = Math.max(0, Math.floor(base64.length * 3 / 4) - padding)
+  return { mime, base64, byteSize }
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  return btoa(binary)
+}
+
 function base64ToBytes(base64: string) {
   const binary = atob(base64.replace(/\s/g, ''))
   const bytes = new Uint8Array(binary.length)
@@ -1017,6 +1105,18 @@ async function setupSchema(db: D1Database) {
       stat_value INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS task_image_chunks (
+      task_id TEXT NOT NULL,
+      result_index INTEGER NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      mime TEXT NOT NULL,
+      total_chunks INTEGER NOT NULL,
+      byte_size INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      PRIMARY KEY (task_id, result_index, chunk_index)
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_task_image_chunks_created_at ON task_image_chunks(created_at)',
   ]
   for (const statement of statements) await db.prepare(statement).run()
 }
@@ -1059,6 +1159,35 @@ async function updateTaskResults(db: D1Database, taskId: string, status: Backgro
   await db.prepare('UPDATE tasks SET status = ?, results_json = ?, updated_at = ? WHERE id = ?')
     .bind(status, JSON.stringify(results.map(stripImage)), Date.now(), taskId)
     .run()
+}
+
+async function storeTaskImageForLocalFetch(db: D1Database, taskId: string, index: number, dataUrl: string, fallbackMime: string) {
+  const { mime, base64, byteSize } = parseDataUrlParts(dataUrl, fallbackMime)
+  const chunkSize = 240 * 1024
+  const totalChunks = Math.max(1, Math.ceil(base64.length / chunkSize))
+  const now = Date.now()
+
+  await db.prepare('DELETE FROM task_image_chunks WHERE task_id = ? AND result_index = ?')
+    .bind(taskId, index)
+    .run()
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const chunk = base64.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize)
+    await db.prepare(`INSERT INTO task_image_chunks (
+      task_id, result_index, chunk_index, mime, total_chunks, byte_size, created_at, data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+      taskId,
+      index,
+      chunkIndex,
+      mime,
+      totalChunks,
+      byteSize,
+      now,
+      chunk,
+    ).run()
+  }
+
+  return { mime, byteSize, totalChunks }
 }
 
 async function finishTask(db: D1Database, taskId: string, status: BackgroundTaskStatus, results: ResultItem[], error: string | undefined, completedAt: number) {
@@ -1176,6 +1305,14 @@ async function getStatValue(db: D1Database, key: string) {
 
 function getBeijingDateKey(now: number) {
   return new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
+
+function mimeToExtension(mime: string) {
+  if (mime === 'image/jpeg') return 'jpg'
+  if (mime === 'image/gif') return 'gif'
+  if (mime === 'image/webp') return 'webp'
+  if (mime === 'image/avif') return 'avif'
+  return 'png'
 }
 
 function createTaskId(prefix = 'task') {

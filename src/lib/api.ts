@@ -154,6 +154,24 @@ export async function getBackgroundTask(taskId: string, accessPassword: string):
   return data.task
 }
 
+export async function fetchBackgroundTaskImage(localImageUrl: string, accessPassword: string): Promise<{ dataUrl: string; mime: string; size: number }> {
+  const response = await fetch(localImageUrl, {
+    headers: { 'X-Access-Password': accessPassword },
+    cache: 'force-cache',
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || formatHttpError(response.status, '本地回传图片下载失败'))
+  }
+  const mime = response.headers.get('Content-Type') || 'image/png'
+  const blob = await response.blob()
+  return {
+    dataUrl: await blobToDataUrl(blob, mime),
+    mime,
+    size: blob.size,
+  }
+}
+
 export async function listBackgroundTasks(accessPassword: string, limit = 20): Promise<BackgroundTask[]> {
   const data = await getJson<{ ok?: boolean; tasks?: BackgroundTask[]; message?: string }>(
     `/api/background-tasks?limit=${encodeURIComponent(String(limit))}`,

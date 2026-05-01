@@ -56,11 +56,12 @@ export function getResolutionLabel(resolution: ResolutionTier) {
 }
 
 export function getImageSize(ratio: AspectRatio, resolution: ResolutionTier) {
-  return isFixedRatio(ratio) && isFixedResolution(resolution) ? SIZE_MAP[resolution][ratio] : '自动'
+  if (!isFixedRatio(ratio)) return '自动'
+  return SIZE_MAP[isFixedResolution(resolution) ? resolution : 'standard'][ratio]
 }
 
 export function getAvailableRatios(resolution: ResolutionTier): AspectRatio[] {
-  return resolution === 'auto' ? ['auto'] : FIXED_RATIOS
+  return resolution === 'auto' ? RATIOS : FIXED_RATIOS
 }
 
 export function normalizeRatioForResolution(ratio: AspectRatio, resolution: ResolutionTier): AspectRatio {

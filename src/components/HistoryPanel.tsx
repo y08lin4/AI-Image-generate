@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { HistoryItem } from '../types'
+import type { AspectRatio, HistoryItem, ResolutionTier } from '../types'
 import { getResolutionLabel } from '../lib/ratios'
 import { copyImageToClipboard, copyTextToClipboard, getImageProxyUrl } from '../lib/api'
 import { ImagePreviewModal } from './ImagePreviewModal'
@@ -20,6 +20,9 @@ type PreviewState = {
   src: string
   title: string
   remoteUrl?: string
+  ratio?: AspectRatio
+  resolution?: ResolutionTier
+  size?: string
 }
 
 function formatTime(ts: number) {
@@ -34,11 +37,14 @@ function formatTime(ts: number) {
 export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePrompt, onUseImage, onShowInResults, onDelete, onClear, onMessage }: Props) {
   const [preview, setPreview] = useState<PreviewState | null>(null)
 
-  function openPreview(src: string, index: number, remoteUrl?: string) {
+  function openPreview(src: string, index: number, remoteUrl?: string, item?: HistoryItem) {
     setPreview({
       src: getImageProxyUrl(src),
       title: `历史图片 ${index + 1}`,
       remoteUrl,
+      ratio: item?.ratio,
+      resolution: item?.resolution,
+      size: item?.size,
     })
   }
 
@@ -97,12 +103,12 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
                   const hiddenCount = item.images.length - 3
                   return (
                     <div className="history-thumb-card" key={`${item.id}-${index}`}>
-                      <button type="button" className="history-thumb-image" onClick={() => openPreview(src, index, remoteUrl)} title="放大预览">
+                      <button type="button" className="history-thumb-image" onClick={() => openPreview(src, index, remoteUrl, item)} title="放大预览">
                         <img src={getImageProxyUrl(src)} alt={`历史图片 ${index + 1}`} />
                         {index === 2 && hiddenCount > 0 ? <span className="history-more-badge">+{hiddenCount}</span> : null}
                       </button>
                       <div className="history-thumb-actions">
-                        <button type="button" onClick={() => openPreview(src, index, remoteUrl)}>放大</button>
+                        <button type="button" onClick={() => openPreview(src, index, remoteUrl, item)}>放大</button>
                         <button type="button" onClick={() => void copyHistoryImage(src)}>复制</button>
                         {remoteUrl ? <button type="button" onClick={() => void copyHistoryUrl(remoteUrl)}>URL</button> : null}
                         {canUseAsReference ? <button type="button" onClick={() => onUseImage(src)}>参考</button> : null}
@@ -134,6 +140,9 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
           src={preview.src}
           title={preview.title}
           remoteUrl={preview.remoteUrl}
+          ratio={preview.ratio}
+          resolution={preview.resolution}
+          requestedSize={preview.size}
           onCopyImage={() => copyHistoryImage(preview.src)}
           onCopyRemoteUrl={preview.remoteUrl ? () => copyHistoryUrl(preview.remoteUrl!) : undefined}
           onClose={() => setPreview(null)}

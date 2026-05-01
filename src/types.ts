@@ -55,6 +55,8 @@ export interface GenerateResultItem {
   elapsedMs?: number
   remoteUrl?: string
   remoteThumbUrl?: string
+  localImageUrl?: string
+  localImageBytes?: number
   uploading?: boolean
   uploadError?: string
 }
