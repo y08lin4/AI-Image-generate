@@ -92,6 +92,7 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
               <div className="history-thumbs">
                 {item.images.slice(0, 3).map((src, index) => {
                   const remoteUrl = item.remoteUrls?.[index]
+                  const canUseAsReference = src.startsWith('data:')
                   return (
                     <div className="history-thumb-card" key={`${item.id}-${index}`}>
                       <button type="button" className="history-thumb-image" onClick={() => openPreview(src, index, remoteUrl)} title="放大预览">
@@ -101,7 +102,7 @@ export function HistoryPanel({ items, collapsed, onToggleCollapsed, onReusePromp
                         <button type="button" onClick={() => openPreview(src, index, remoteUrl)}>放大</button>
                         <button type="button" onClick={() => void copyHistoryImage(src)}>复制</button>
                         {remoteUrl ? <button type="button" onClick={() => void copyHistoryUrl(remoteUrl)}>URL</button> : null}
-                        <button type="button" onClick={() => onUseImage(src)}>参考</button>
+                        {canUseAsReference ? <button type="button" onClick={() => onUseImage(src)}>参考</button> : null}
                       </div>
                     </div>
                   )

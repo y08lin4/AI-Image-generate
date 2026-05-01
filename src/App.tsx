@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSettings, AspectRatio, GenerationTask, GenerateResultItem, HistoryItem, InputImage, Mode, ResolutionTier } from './types'
+import type { AppSettings, AspectRatio, BackgroundStats, BackgroundTask, GenerationTask, GenerateResultItem, HistoryItem, InputImage, Mode, ResolutionTier } from './types'
 import { RatioPicker } from './components/RatioPicker'
 import { ResolutionPicker } from './components/ResolutionPicker'
 import { ImageUploader } from './components/ImageUploader'
 import { SettingsModal } from './components/SettingsModal'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TaskQueue } from './components/TaskQueue'
-import { createId, generateImagesDirect, generateImagesStream, uploadImageToPixhost } from './lib/api'
+import { createBackgroundTask, createId, generateImagesDirect, generateImagesStream, getBackgroundStats, getBackgroundTask, listBackgroundTasks, retryBackgroundTask, uploadImageToPixhost } from './lib/api'
 import { addHistory, clearHistory, deleteHistory, getHistory, updateHistoryImageUrl } from './lib/db'
 import { getImageSize, getResolutionLabel } from './lib/ratios'
-import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
+import { addActiveBackgroundTask, loadActiveBackgroundTasks, removeActiveBackgroundTask, DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
 import './styles.css'
 
 type Message = { text: string; type: 'ok' | 'error' | 'info' } | null
@@ -28,10 +28,43 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [message, setMessage] = useState<Message>(null)
+  const [backgroundStats, setBackgroundStats] = useState<BackgroundStats | null>(null)
+  const [syncingCloudTasks, setSyncingCloudTasks] = useState(false)
   const uploadCacheRef = useRef(new Map<string, Map<number, UploadResult>>())
+  const pollTimersRef = useRef(new Map<string, number>())
+  const settingsRef = useRef(settings)
+
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
 
   useEffect(() => {
     void refreshHistory()
+    void refreshBackgroundStats()
+  }, [])
+
+  useEffect(() => {
+    if (!settings.accessPassword.trim()) return
+    void restoreActiveBackgroundTasks(false)
+  }, [settings.accessPassword])
+
+  useEffect(() => {
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') {
+        void restoreActiveBackgroundTasks(false)
+      }
+    }
+    const handleFocus = () => {
+      void restoreActiveBackgroundTasks(false)
+    }
+    document.addEventListener('visibilitychange', handleResume)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', handleResume)
+      window.removeEventListener('focus', handleFocus)
+      for (const timer of pollTimersRef.current.values()) window.clearTimeout(timer)
+      pollTimersRef.current.clear()
+    }
   }, [])
 
   useEffect(() => {
@@ -119,8 +152,163 @@ export default function App() {
     setHistory(await getHistory())
   }
 
+  async function refreshBackgroundStats() {
+    const password = settingsRef.current.accessPassword.trim()
+    if (!password) return
+    try {
+      setBackgroundStats(await getBackgroundStats(password))
+    } catch {
+      // 未配置 D1 / Workflows 时不阻塞主流程
+    }
+  }
+
+  function getRequestModeLabel(value: AppSettings['requestMode']) {
+    if (value === 'background') return 'Worker 后台任务'
+    if (value === 'worker') return 'Worker 流式代理'
+    return '浏览器直连'
+  }
+
+  function isCloudTaskFinished(task: BackgroundTask) {
+    return task.status === 'completed' || task.status === 'failed' || task.status === 'partial_failed'
+  }
+
+  function cloudTaskToGenerationTask(task: BackgroundTask): GenerationTask {
+    return {
+      id: task.id,
+      cloudTaskId: task.id,
+      cloudStatus: task.status,
+      retryOf: task.retryOf,
+      createdAt: task.createdAt,
+      mode: task.mode,
+      requestMode: 'background',
+      prompt: task.prompt,
+      ratio: task.ratio,
+      resolution: task.resolution,
+      size: task.size,
+      model: task.model,
+      count: task.count,
+      concurrency: task.concurrency,
+      status: task.status === 'failed' ? 'failed' : isCloudTaskFinished(task) ? 'completed' : 'running',
+      results: task.results,
+      elapsedMs: task.elapsedMs,
+      error: task.error,
+    }
+  }
+
+  function upsertTask(nextTask: GenerationTask) {
+    setTasks((prev) => {
+      const index = prev.findIndex((task) => task.id === nextTask.id)
+      if (index < 0) return [nextTask, ...prev]
+      const next = [...prev]
+      next[index] = { ...next[index], ...nextTask }
+      return next
+    })
+  }
+
+  async function saveCloudTaskToHistory(task: BackgroundTask) {
+    const okResults = task.results.filter((item) => item.ok && (item.remoteUrl || item.image))
+    if (!okResults.length) return
+    await addHistory({
+      id: task.id,
+      createdAt: task.createdAt,
+      mode: task.mode,
+      prompt: task.prompt,
+      ratio: task.ratio,
+      resolution: task.resolution,
+      size: task.size,
+      model: task.model,
+      images: okResults.map((item) => item.image || item.remoteUrl!),
+      imageResultIndexes: okResults.map((item) => item.index),
+      remoteUrls: okResults.map((item) => item.remoteUrl || ''),
+      remoteThumbUrls: okResults.map((item) => item.remoteThumbUrl || ''),
+      failedCount: Math.max(0, task.count - okResults.length),
+      elapsedMs: task.elapsedMs || (task.completedAt ? task.completedAt - task.createdAt : 0),
+    })
+    await refreshHistory()
+  }
+
+  async function applyCloudTask(task: BackgroundTask) {
+    upsertTask(cloudTaskToGenerationTask(task))
+    if (isCloudTaskFinished(task)) {
+      removeActiveBackgroundTask(task.id)
+      const timer = pollTimersRef.current.get(task.id)
+      if (timer) window.clearTimeout(timer)
+      pollTimersRef.current.delete(task.id)
+      await saveCloudTaskToHistory(task)
+      await refreshBackgroundStats()
+    } else {
+      addActiveBackgroundTask(task.id, task.createdAt)
+      startBackgroundPolling(task.id)
+    }
+  }
+
+  function startBackgroundPolling(taskId: string) {
+    if (pollTimersRef.current.has(taskId)) return
+
+    const tick = async () => {
+      const password = settingsRef.current.accessPassword.trim()
+      if (!password) {
+        pollTimersRef.current.delete(taskId)
+        return
+      }
+
+      try {
+        const task = await getBackgroundTask(taskId, password)
+        await applyCloudTask(task)
+        if (!isCloudTaskFinished(task)) {
+          const timer = window.setTimeout(tick, 5000)
+          pollTimersRef.current.set(taskId, timer)
+        }
+      } catch (error) {
+        const timer = window.setTimeout(tick, 10_000)
+        pollTimersRef.current.set(taskId, timer)
+        if (error instanceof Error) showMessage(`后台任务同步失败：${error.message}`, 'error')
+      }
+    }
+
+    const timer = window.setTimeout(tick, 1000)
+    pollTimersRef.current.set(taskId, timer)
+  }
+
+  async function restoreActiveBackgroundTasks(notify: boolean) {
+    const password = settingsRef.current.accessPassword.trim()
+    if (!password) return
+    const active = loadActiveBackgroundTasks()
+    if (!active.length) {
+      await refreshBackgroundStats()
+      return
+    }
+
+    try {
+      const tasks = await Promise.all(active.map((item) => getBackgroundTask(item.id, password)))
+      for (const task of tasks) await applyCloudTask(task)
+      if (notify) showMessage(`已恢复 ${tasks.length} 个后台任务`, 'ok')
+    } catch (error) {
+      if (notify) showMessage(error instanceof Error ? error.message : '恢复后台任务失败', 'error')
+    }
+  }
+
+  async function syncCloudTasks() {
+    const password = settings.accessPassword.trim()
+    if (!password) {
+      showMessage('同步云端任务需要先填写 Worker 访问密码', 'error')
+      setSettingsOpen(true)
+      return
+    }
+    setSyncingCloudTasks(true)
+    try {
+      const cloudTasks = await listBackgroundTasks(password, 30)
+      for (const task of cloudTasks) await applyCloudTask(task)
+      showMessage(`已同步 ${cloudTasks.length} 个云端任务`, 'ok')
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : '同步云端任务失败', 'error')
+    } finally {
+      setSyncingCloudTasks(false)
+    }
+  }
+
   function validateBeforeGenerate() {
-    if (settings.requestMode === 'worker' && !settings.accessPassword.trim()) return '请先在设置里填写 Worker 访问密码'
+    if ((settings.requestMode === 'worker' || settings.requestMode === 'background') && !settings.accessPassword.trim()) return '请先在设置里填写 Worker 访问密码'
     if (settings.autoUploadPixhost && !settings.accessPassword.trim()) return '自动上传图床需要 Worker 访问密码'
     if (!settings.baseUrl.trim()) return '请先填写 API URL'
     if (!settings.apiKey.trim()) return '请先填写 API Key'
@@ -157,6 +345,12 @@ export default function App() {
       inputImages: mode === 'image-to-image' ? inputImages.map((image) => ({ ...image })) : [],
     }
 
+    if (settings.requestMode === 'background') {
+      showMessage(mode === 'image-to-image' ? '正在创建后台任务并上传参考图...' : '正在创建后台任务...', 'info')
+      void submitBackgroundTask(payload, settings.accessPassword)
+      return
+    }
+
     const task: GenerationTask = {
       id: taskId,
       createdAt: startedAt,
@@ -175,6 +369,32 @@ export default function App() {
     setTasks((prev) => [task, ...prev])
     showMessage('任务已提交，可以继续提交新任务', 'ok')
     void runGenerationTask(taskId, payload, settings.requestMode, settings.accessPassword, settings.autoUploadPixhost, startedAt)
+  }
+
+  async function submitBackgroundTask(
+    payload: {
+      mode: Mode
+      prompt: string
+      ratio: AspectRatio
+      resolution: ResolutionTier
+      model: string
+      baseUrl: string
+      apiKey: string
+      timeoutSec: number
+      count: number
+      concurrency: number
+      inputImages: InputImage[]
+    },
+    accessPassword: string,
+  ) {
+    try {
+      const cloudTask = await createBackgroundTask(payload, accessPassword)
+      addActiveBackgroundTask(cloudTask.id, cloudTask.createdAt)
+      await applyCloudTask(cloudTask)
+      showMessage('后台任务已提交，App 切后台也不会丢任务，回前台会自动恢复', 'ok')
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : '创建后台任务失败', 'error')
+    }
   }
 
   async function runGenerationTask(
@@ -328,6 +548,38 @@ export default function App() {
     })
   }
 
+  async function handleRetryBackgroundTask(taskId: string) {
+    if (!settings.accessPassword.trim()) {
+      showMessage('重试后台任务需要先填写 Worker 访问密码', 'error')
+      setSettingsOpen(true)
+      return
+    }
+    if (!settings.apiKey.trim()) {
+      showMessage('重试后台任务需要当前浏览器里的 API Key', 'error')
+      setSettingsOpen(true)
+      return
+    }
+
+    try {
+      const cloudTask = await retryBackgroundTask(
+        taskId,
+        {
+          apiKey: settings.apiKey.trim(),
+          baseUrl: settings.baseUrl.trim(),
+          timeoutSec: settings.timeoutSec,
+          concurrency: settings.concurrency,
+          model: settings.model.trim(),
+        },
+        settings.accessPassword.trim(),
+      )
+      addActiveBackgroundTask(cloudTask.id, cloudTask.createdAt)
+      await applyCloudTask(cloudTask)
+      showMessage('已创建重试后台任务', 'ok')
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : '重试后台任务失败', 'error')
+    }
+  }
+
   function handleUseAsReference(dataUrl: string) {
     const nextImage = {
       id: createId('ref'),
@@ -381,7 +633,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className="config-pill" title={settings.baseUrl}>
-            <span>{settings.requestMode === 'worker' ? 'Worker 代理' : '浏览器直连'}</span>
+            <span>{getRequestModeLabel(settings.requestMode)}</span>
           </div>
           <button type="button" className="secondary-btn" onClick={() => setSettingsOpen(true)}>设置</button>
         </div>
@@ -481,7 +733,7 @@ export default function App() {
           <div className="canvas-header">
             <div>
               <h2>生成结果</h2>
-              <p>{mode === 'image-to-image' ? '图生图' : '文生图'} · {ratio} · {getResolutionLabel(resolution)} · {size} · {settings.requestMode === 'worker' ? 'Worker 流式代理' : '浏览器直连'} · 并发 {settings.concurrency}</p>
+              <p>{mode === 'image-to-image' ? '图生图' : '文生图'} · {ratio} · {getResolutionLabel(resolution)} · {size} · {getRequestModeLabel(settings.requestMode)} · 并发 {settings.concurrency}</p>
             </div>
           </div>
           <TaskQueue
@@ -491,6 +743,10 @@ export default function App() {
             onMessage={showMessage}
             onRemove={removeTask}
             onClearFinished={clearFinishedTasks}
+            onSyncCloudTasks={() => void syncCloudTasks()}
+            onRetryBackgroundTask={(taskId) => void handleRetryBackgroundTask(taskId)}
+            backgroundStats={backgroundStats}
+            syncingCloudTasks={syncingCloudTasks}
           />
         </section>
 

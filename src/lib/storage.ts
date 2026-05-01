@@ -2,6 +2,7 @@ import type { AppSettings, AspectRatio, ResolutionTier } from '../types'
 
 const SETTINGS_KEY = 'ai-image-generate:settings:v1'
 const SESSION_SETTINGS_KEY = 'ai-image-generate:session-settings:v1'
+const ACTIVE_BACKGROUND_TASKS_KEY = 'ai-image-generate:active-background-tasks:v1'
 
 export const DEFAULT_SETTINGS: AppSettings = {
   requestMode: 'worker',
@@ -34,7 +35,7 @@ function sanitizeSettings(raw: Partial<AppSettings>): AppSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...raw,
-    requestMode: raw.requestMode === 'direct' ? 'direct' : DEFAULT_SETTINGS.requestMode,
+    requestMode: raw.requestMode === 'direct' || raw.requestMode === 'background' ? raw.requestMode : DEFAULT_SETTINGS.requestMode,
     timeoutSec: clampNumber(raw.timeoutSec, DEFAULT_SETTINGS.timeoutSec, 10, 900),
     count: clampNumber(raw.count, DEFAULT_SETTINGS.count, 1, 12),
     concurrency: clampNumber(raw.concurrency, DEFAULT_SETTINGS.concurrency, 1, 6),
@@ -80,6 +81,43 @@ export function saveSettings(settings: AppSettings) {
 export function clearSettings() {
   localStorage.removeItem(SETTINGS_KEY)
   sessionStorage.removeItem(SESSION_SETTINGS_KEY)
+}
+
+export interface ActiveBackgroundTask {
+  id: string
+  createdAt: number
+}
+
+export function loadActiveBackgroundTasks(): ActiveBackgroundTask[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const saved = localStorage.getItem(ACTIVE_BACKGROUND_TASKS_KEY)
+    if (!saved) return []
+    const parsed = JSON.parse(saved) as ActiveBackgroundTask[]
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item) => typeof item?.id === 'string' && item.id.trim())
+      .map((item) => ({ id: item.id, createdAt: Number(item.createdAt) || Date.now() }))
+  } catch {
+    return []
+  }
+}
+
+export function saveActiveBackgroundTasks(tasks: ActiveBackgroundTask[]) {
+  if (typeof window === 'undefined') return
+  const compact = tasks
+    .filter((item, index, arr) => item.id && arr.findIndex((other) => other.id === item.id) === index)
+    .slice(0, 50)
+  localStorage.setItem(ACTIVE_BACKGROUND_TASKS_KEY, JSON.stringify(compact))
+}
+
+export function addActiveBackgroundTask(id: string, createdAt = Date.now()) {
+  const tasks = loadActiveBackgroundTasks()
+  saveActiveBackgroundTasks([{ id, createdAt }, ...tasks.filter((item) => item.id !== id)])
+}
+
+export function removeActiveBackgroundTask(id: string) {
+  saveActiveBackgroundTasks(loadActiveBackgroundTasks().filter((item) => item.id !== id))
 }
 
 export function maskSecret(value: string) {

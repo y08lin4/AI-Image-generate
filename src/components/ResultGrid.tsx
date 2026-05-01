@@ -41,9 +41,10 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
     : results.map((item) => ({ ...item, loading: false }))
 
   function openPreview(card: GenerateResultItem) {
-    if (!card.image) return
+    const src = card.image || card.remoteUrl
+    if (!src) return
     setPreview({
-      src: card.image,
+      src,
       title: `生成结果 ${card.index + 1}`,
       remoteUrl: card.remoteUrl,
     })
@@ -85,9 +86,13 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
               <div className="spinner" />
               <span>第 {card.index + 1} 张生成中...</span>
             </div>
-          ) : card.ok && card.image ? (
+          ) : card.ok && (card.image || card.remoteUrl) ? (
+            (() => {
+              const src = card.image || card.remoteUrl!
+              const canUseAsReference = Boolean(card.image?.startsWith('data:'))
+              return (
             <>
-              <img src={card.image} alt={`生成结果 ${card.index + 1}`} />
+              <img src={src} alt={`生成结果 ${card.index + 1}`} />
               <div className="floating-actions">
                 <button
                   type="button"
@@ -113,13 +118,17 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
               <div className="card-toolbar">
                 <button
                   type="button"
-                  onClick={() => void downloadResultImage(card.image!, card.index)}
+                  onClick={() => void downloadResultImage(src, card.index)}
                 >下载</button>
-                <button type="button" onClick={() => void copyResultImage(card.image!)}>复制</button>
-                <button type="button" onClick={() => onUseAsReference(card.image!)}>作为参考图</button>
+                <button type="button" onClick={() => void copyResultImage(src)}>复制</button>
+                {canUseAsReference ? (
+                  <button type="button" onClick={() => onUseAsReference(card.image!)}>作为参考图</button>
+                ) : null}
               </div>
               <small className="card-meta">#{card.index + 1} · {card.elapsedMs ? `${(card.elapsedMs / 1000).toFixed(1)}s` : '完成'}</small>
             </>
+              )
+            })()
           ) : (
             <div className="error-card">
               <strong>第 {card.index + 1} 张失败</strong>

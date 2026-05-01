@@ -1,5 +1,7 @@
 import type {
   AspectRatio,
+  BackgroundStats,
+  BackgroundTask,
   GenerateErrorResponse,
   GenerateRequest,
   GenerateResultItem,
@@ -130,6 +132,60 @@ export async function generateImagesStream(
   }
 }
 
+export async function createBackgroundTask(
+  payload: GenerateRequest,
+  accessPassword: string,
+): Promise<BackgroundTask> {
+  const data = await postJson<{ ok?: boolean; task?: BackgroundTask; message?: string }>(
+    '/api/background-tasks',
+    payload,
+    accessPassword,
+  )
+  if (!data.ok || !data.task) throw new Error(data.message || '创建后台任务失败')
+  return data.task
+}
+
+export async function getBackgroundTask(taskId: string, accessPassword: string): Promise<BackgroundTask> {
+  const data = await getJson<{ ok?: boolean; task?: BackgroundTask; message?: string }>(
+    `/api/background-tasks/${encodeURIComponent(taskId)}`,
+    accessPassword,
+  )
+  if (!data.ok || !data.task) throw new Error(data.message || '查询后台任务失败')
+  return data.task
+}
+
+export async function listBackgroundTasks(accessPassword: string, limit = 20): Promise<BackgroundTask[]> {
+  const data = await getJson<{ ok?: boolean; tasks?: BackgroundTask[]; message?: string }>(
+    `/api/background-tasks?limit=${encodeURIComponent(String(limit))}`,
+    accessPassword,
+  )
+  if (!data.ok || !data.tasks) throw new Error(data.message || '查询云端任务列表失败')
+  return data.tasks
+}
+
+export async function retryBackgroundTask(
+  taskId: string,
+  payload: Pick<GenerateRequest, 'apiKey' | 'baseUrl' | 'timeoutSec' | 'concurrency' | 'model'>,
+  accessPassword: string,
+): Promise<BackgroundTask> {
+  const data = await postJson<{ ok?: boolean; task?: BackgroundTask; message?: string }>(
+    `/api/background-tasks/${encodeURIComponent(taskId)}/retry`,
+    payload,
+    accessPassword,
+  )
+  if (!data.ok || !data.task) throw new Error(data.message || '重试后台任务失败')
+  return data.task
+}
+
+export async function getBackgroundStats(accessPassword: string): Promise<BackgroundStats> {
+  const data = await getJson<{ ok?: boolean; stats?: BackgroundStats; message?: string }>(
+    '/api/stats',
+    accessPassword,
+  )
+  if (!data.ok || !data.stats) throw new Error(data.message || '查询统计失败')
+  return data.stats
+}
+
 export async function generateImagesDirect(
   payload: GenerateRequest,
   onResult: (result: GenerateResultItem) => void,
@@ -194,6 +250,37 @@ export async function uploadImageToPixhost(
   return { remoteUrl: data.showUrl, remoteThumbUrl: data.thumbUrl }
 }
 
+async function postJson<T>(url: string, body: unknown, accessPassword: string): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Access-Password': accessPassword,
+    },
+    body: JSON.stringify(body),
+  })
+  return parseJsonOrThrow<T>(response)
+}
+
+async function getJson<T>(url: string, accessPassword: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: { 'X-Access-Password': accessPassword },
+  })
+  return parseJsonOrThrow<T>(response)
+}
+
+async function parseJsonOrThrow<T>(response: Response): Promise<T> {
+  const data = await response.json().catch(() => null) as ({ ok?: boolean; message?: string; status?: number } & Partial<GenerateErrorResponse>) | null
+  if (!response.ok) {
+    if (data?.ok === false) {
+      const status = data.status || response.status
+      throw new Error(formatHttpError(status, data.message))
+    }
+    throw new Error(formatHttpError(response.status, data?.message))
+  }
+  return data as T
+}
+
 type NativeBridge = {
   copyText?: (text: string) => string | Promise<string>
   copyImage?: (dataUrl: string, fileName: string) => string | Promise<string>
@@ -207,10 +294,12 @@ declare global {
 }
 
 export async function downloadDataUrl(dataUrl: string, fileName: string) {
-  const nativeResult = await callNativeBridge('saveImage', dataUrl, fileName)
-  if (nativeResult.handled) {
-    if (nativeResult.ok) return
-    throw new Error(nativeResult.message || 'App 保存图片失败')
+  if (dataUrl.startsWith('data:image/')) {
+    const nativeResult = await callNativeBridge('saveImage', dataUrl, fileName)
+    if (nativeResult.handled) {
+      if (nativeResult.ok) return
+      throw new Error(nativeResult.message || 'App 保存图片失败')
+    }
   }
 
   const a = document.createElement('a')
@@ -252,10 +341,12 @@ export async function copyTextToClipboard(text: string) {
 }
 
 export async function copyImageToClipboard(dataUrl: string, fileName = 'ai-image.png') {
-  const nativeResult = await callNativeBridge('copyImage', dataUrl, fileName)
-  if (nativeResult.handled) {
-    if (nativeResult.ok) return
-    throw new Error(nativeResult.message || 'App 复制图片失败')
+  if (dataUrl.startsWith('data:image/')) {
+    const nativeResult = await callNativeBridge('copyImage', dataUrl, fileName)
+    if (nativeResult.handled) {
+      if (nativeResult.ok) return
+      throw new Error(nativeResult.message || 'App 复制图片失败')
+    }
   }
 
   if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {

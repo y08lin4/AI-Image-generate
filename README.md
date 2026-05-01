@@ -12,16 +12,18 @@
 
 - API URL / API Key 保存在浏览器本地，不保存在 Worker。
 - Worker 访问密码由 `wrangler.jsonc` 的 `ACCESS_PASSWORD` 控制。
-- 支持两种请求方式：`Worker 流式代理` 和 `浏览器直连`。
+- 支持三种请求方式：`Worker 流式代理`、`Worker 后台任务` 和 `浏览器直连`。
 - 支持文生图与图生图，图生图可上传多张参考图。
 - 支持一次生成多张：按并发数拆成多个单图请求，完成一张展示一张。
-- 支持多任务队列：任务提交后会在后台生成，页面可以继续提交新任务。
+- 支持多任务队列：任务提交后页面可以继续提交新任务。
+- 支持 Worker 后台任务模式：任务由 Cloudflare Workflows 执行，D1 保存任务状态和 PiXhost 图片直链；App/WebView 切后台后，回到前台会自动恢复任务。
 - 支持比例：`自动`、`1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`。
 - 支持分辨率档位：`自动`、`标准`、`2K`、`4K`。
 - 支持生成结果操作：下载、复制到剪贴板、作为图生图参考图、全屏放大预览。
 - 全屏预览已抽离为独立组件，会读取图片真实尺寸，显示实际像素尺寸、实际宽高比和图片文件大小，并支持在预览里复制图片 / URL。
 - 支持自动上传或单张手动上传生成图到 PiXhost 图床；自动上传可关闭，手动上传可在图片悬浮时点击「上传图床」。
 - 上传失败后图片悬浮按钮会显示「重试上传」；上传成功后可复制 PiXhost 图片直链 URL。
+- 后台任务支持失败后重试、云端任务列表同步，并显示「今日已生成」与「累计已生成」统计。
 - 支持超时时间：默认 420 秒，最大 900 秒。
 - 历史记录保存在浏览器 IndexedDB，本地历史栏支持一键收起/展开，历史缩略图支持放大预览、复制和作为参考图；已上传图床的图片会同步保存图床 URL，后续可继续复制。
 - 针对常见错误提供明确提示：401 Key 错误或额度问题、403 无权限 / 模型不可用、413 图片太大、429 限流、524 Cloudflare 100 秒熔断、CORS 建议切换 Worker 模式。
@@ -90,6 +92,19 @@ image[]
 - 需要填写 Worker 访问密码。
 - 自动上传 PiXhost 图床也通过 Worker 代理，并复用同一个 Worker 访问密码。
 
+### Worker 后台任务
+
+```text
+浏览器/App -> /api/background-tasks -> Worker -> Cloudflare Workflows -> 上游图片接口 -> PiXhost -> D1
+```
+
+- 适合 100-300 秒的长时间生图，尤其适合 App/WebView 切后台场景。
+- 文生图和图生图都支持后台任务；图生图会先把参考图上传 PiXhost，再把参考图 URL 交给 Workflow 使用。
+- 生成结果会自动上传 PiXhost，D1 只保存任务状态、参数摘要和图片直链，不保存生成图片二进制。
+- D1 不保存 API Key；重试失败任务时，需要浏览器当前设置里仍有 API Key。
+- 前端会在 `visibilitychange` / `focus` 时自动同步未完成任务，也可以手动点「同步云端任务」。
+- 需要 Cloudflare D1 和 Workflows 绑定。
+
 ### 浏览器直连
 
 ```text
@@ -120,6 +135,8 @@ image[]
 - PiXhost 限制：支持 `JPG / PNG / GIF`，单张最大 `10MB`。4K PNG 可能超过 10MB，超过时会显示上传失败，但不影响原图下载。
 
 > 自动上传会把图片发送到第三方图床。涉及私密图片时请不要开启。
+
+后台任务模式下，生成结果和图生图参考图都会经过 PiXhost，因为本项目不使用 R2 存图片，只在 D1 保存图片直链。
 
 ## 错误提示
 
@@ -155,7 +172,16 @@ npm run worker:dev
 
 ## 部署到 Cloudflare Worker
 
-1. 修改 `wrangler.jsonc`：
+1. 创建 D1 数据库并应用迁移：
+
+```bash
+npx wrangler d1 create ai-image-generate
+npx wrangler d1 migrations apply ai-image-generate --remote
+```
+
+如果 Wrangler 返回 `database_id`，请按提示把它填进 `wrangler.jsonc` 的 `d1_databases` 配置中。
+
+2. 修改 `wrangler.jsonc`：
 
 ```jsonc
 "vars": {
@@ -165,23 +191,24 @@ npm run worker:dev
 }
 ```
 
-2. 部署：
+3. 部署：
 
 ```bash
 npm run worker:deploy
 ```
 
-3. 打开站点后，在「设置」里填写：
+4. 打开站点后，在「设置」里填写：
 
 - Worker 访问密码：和 `ACCESS_PASSWORD` 一致
 - API URL：例如 `https://api.openai.com/v1`
 - API Key：你的上游 API Key
 - 模型：例如 `gpt-image-2`
-- 请求方式：默认选 `Worker 流式代理`；如果上游支持 CORS，可以改成 `浏览器直连`
+- 请求方式：默认选 `Worker 流式代理`；App 长任务建议选 `Worker 后台任务`；如果上游支持 CORS，可以改成 `浏览器直连`
 
 ## 安全说明
 
 - Worker 不保存 API Key，也不打印请求体。
+- Worker 后台任务为了断流后继续执行，会把 API Key 传给 Cloudflare Workflow 实例使用；D1 不保存 API Key。
 - `ACCESS_PASSWORD` 只用于防止你的 Worker 被别人直接滥用。
 - 默认值 `change-me` 会被视为未配置，部署后必须修改。
 - 默认阻止代理 localhost、内网 IP 和 metadata 地址。

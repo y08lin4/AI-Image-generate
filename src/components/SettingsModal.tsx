@@ -71,6 +71,13 @@ export function SettingsModal({ open, settings, onClose, onSave, onMessage }: Pr
               </button>
               <button
                 type="button"
+                className={draft.requestMode === 'background' ? 'active' : ''}
+                onClick={() => setDraft((prev) => ({ ...prev, requestMode: 'background' }))}
+              >
+                Worker 后台任务
+              </button>
+              <button
+                type="button"
                 className={draft.requestMode === 'direct' ? 'active' : ''}
                 onClick={() => setDraft((prev) => ({ ...prev, requestMode: 'direct' }))}
               >
@@ -78,7 +85,7 @@ export function SettingsModal({ open, settings, onClose, onSave, onMessage }: Pr
               </button>
             </div>
             <small>
-              Worker 代理可绕过 CORS，并会用 SSE 保活；浏览器直连链路更短，但上游必须允许 CORS。
+              流式代理可绕过 CORS 并 SSE 保活；后台任务适合 App 切后台，会把结果自动上传 PiXhost 并写入 D1；浏览器直连链路更短但上游必须允许 CORS。
             </small>
           </div>
 
@@ -119,7 +126,7 @@ export function SettingsModal({ open, settings, onClose, onSave, onMessage }: Pr
               </button>
             </div>
             <small>
-              仅 Worker 代理模式需要。密码在 Worker 环境变量 <code>ACCESS_PASSWORD</code> 里改。
+              Worker 流式代理 / 后台任务需要。密码在 Worker 环境变量 <code>ACCESS_PASSWORD</code> 里改。
             </small>
           </label>
 
@@ -183,7 +190,7 @@ export function SettingsModal({ open, settings, onClose, onSave, onMessage }: Pr
             生成成功后自动上传到 PiXhost 图床，结果图悬浮时可复制 URL
           </label>
           <small className="settings-note full">
-            自动上传会把生成图片发送到第三方图床；该功能通过 Worker 代理上传，需要填写 Worker 访问密码。
+            自动上传会把生成图片发送到第三方图床；后台任务模式下结果始终会自动上传并只保存图床直链。
           </small>
 
           <label className="check-field full">

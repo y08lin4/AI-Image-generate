@@ -1,6 +1,6 @@
 export type Mode = 'text-to-image' | 'image-to-image'
 
-export type RequestMode = 'worker' | 'direct'
+export type RequestMode = 'worker' | 'background' | 'direct'
 
 export type Ratio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9'
 
@@ -59,6 +59,34 @@ export interface GenerateResultItem {
   uploadError?: string
 }
 
+export type BackgroundTaskStatus = 'queued' | 'running' | 'uploading' | 'completed' | 'failed' | 'partial_failed'
+
+export interface BackgroundTask {
+  id: string
+  status: BackgroundTaskStatus
+  mode: Mode
+  prompt: string
+  ratio: AspectRatio
+  resolution: ResolutionTier
+  size: string
+  model: string
+  count: number
+  concurrency: number
+  results: GenerateResultItem[]
+  error?: string
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+  elapsedMs?: number
+  retryOf?: string
+}
+
+export interface BackgroundStats {
+  today: string
+  todayGenerated: number
+  totalGenerated: number
+}
+
 export interface GenerateSuccessResponse {
   ok: true
   mode: Mode
@@ -105,6 +133,9 @@ export type GenerationTaskStatus = 'running' | 'completed' | 'failed'
 
 export interface GenerationTask {
   id: string
+  cloudTaskId?: string
+  cloudStatus?: BackgroundTaskStatus
+  retryOf?: string
   createdAt: number
   mode: Mode
   requestMode: RequestMode

@@ -8,6 +8,27 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-image-generate",
+      // 如部署时提示需要 database_id，请先运行：
+      // npx wrangler d1 create ai-image-generate
+      // 然后把返回的 database_id 填到下一行。
+      // "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "ai-image-generate-workflow",
+      "binding": "IMAGE_WORKFLOW",
+      "class_name": "ImageWorkflow",
+      "limits": {
+        "steps": 10
+      }
+    }
+  ],
   "vars": {
     "ACCESS_PASSWORD": "change-me",
     "ALLOW_HTTP_API": "true",
