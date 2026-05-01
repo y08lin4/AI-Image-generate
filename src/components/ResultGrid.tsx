@@ -132,8 +132,9 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
             })()
           ) : (
             <div className="error-card">
-              <strong>第 {card.index + 1} 张失败</strong>
+              <strong>{isUploadOnlyFailure(card) ? `第 ${card.index + 1} 张已生成，上传失败` : `第 ${card.index + 1} 张失败`}</strong>
               <p>{card.error || '未知错误'}</p>
+              {isUploadOnlyFailure(card) ? <small>后台任务不保存原图，只保存图床直链；可降低分辨率或改用前台流式模式重试。</small> : null}
               {card.status ? <small>HTTP {card.status}</small> : null}
             </div>
           )}
@@ -151,4 +152,8 @@ export function ResultGrid({ loading, placeholders, results, onUploadImage, onUs
       ) : null}
     </div>
   )
+}
+
+function isUploadOnlyFailure(result: GenerateResultItem) {
+  return Boolean(result.uploadError || /生成成功但上传|上传 PiXhost 失败|PiXhost/.test(result.error || ''))
 }

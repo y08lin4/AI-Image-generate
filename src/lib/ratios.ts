@@ -4,6 +4,8 @@ export const RATIOS: AspectRatio[] = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3',
 
 export const RESOLUTION_TIERS: ResolutionTier[] = ['auto', 'standard', '2k', '4k']
 
+export const FIXED_RATIOS: Ratio[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9']
+
 export const RESOLUTION_LABEL: Record<ResolutionTier, string> = {
   auto: '自动',
   standard: '标准',
@@ -55,6 +57,15 @@ export function getResolutionLabel(resolution: ResolutionTier) {
 
 export function getImageSize(ratio: AspectRatio, resolution: ResolutionTier) {
   return isFixedRatio(ratio) && isFixedResolution(resolution) ? SIZE_MAP[resolution][ratio] : '自动'
+}
+
+export function getAvailableRatios(resolution: ResolutionTier): AspectRatio[] {
+  return resolution === 'auto' ? ['auto'] : FIXED_RATIOS
+}
+
+export function normalizeRatioForResolution(ratio: AspectRatio, resolution: ResolutionTier): AspectRatio {
+  const available = getAvailableRatios(resolution)
+  return available.includes(ratio) ? ratio : available[0]
 }
 
 export function getRatioPreviewStyle(ratio: AspectRatio) {

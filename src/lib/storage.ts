@@ -1,4 +1,5 @@
 import type { AppSettings, AspectRatio, ResolutionTier } from '../types'
+import { normalizeRatioForResolution } from './ratios'
 
 const SETTINGS_KEY = 'ai-image-generate:settings:v1'
 const SESSION_SETTINGS_KEY = 'ai-image-generate:session-settings:v1'
@@ -13,7 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timeoutSec: 420,
   count: 1,
   concurrency: 2,
-  defaultRatio: 'auto',
+  defaultRatio: '1:1',
   defaultResolution: 'standard',
   autoUploadPixhost: false,
   rememberSecrets: true,
@@ -32,6 +33,8 @@ function normalizeResolution(value: unknown): ResolutionTier {
 }
 
 function sanitizeSettings(raw: Partial<AppSettings>): AppSettings {
+  const defaultResolution = normalizeResolution(raw.defaultResolution)
+  const defaultRatio = normalizeRatioForResolution(normalizeRatio(raw.defaultRatio), defaultResolution)
   return {
     ...DEFAULT_SETTINGS,
     ...raw,
@@ -39,8 +42,8 @@ function sanitizeSettings(raw: Partial<AppSettings>): AppSettings {
     timeoutSec: clampNumber(raw.timeoutSec, DEFAULT_SETTINGS.timeoutSec, 10, 900),
     count: clampNumber(raw.count, DEFAULT_SETTINGS.count, 1, 12),
     concurrency: clampNumber(raw.concurrency, DEFAULT_SETTINGS.concurrency, 1, 6),
-    defaultRatio: normalizeRatio(raw.defaultRatio),
-    defaultResolution: normalizeResolution(raw.defaultResolution),
+    defaultRatio,
+    defaultResolution,
     autoUploadPixhost: raw.autoUploadPixhost === true,
     rememberSecrets: raw.rememberSecrets !== false,
   }

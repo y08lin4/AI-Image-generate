@@ -594,8 +594,9 @@ function requireAccessPassword(request: Request, env: Env): Response | null {
 function normalizePayload(payload: GeneratePayload, env: Env): NormalizedPayload {
   const mode = payload.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image'
   const prompt = String(payload.prompt || '').trim()
-  const ratio = isRatio(payload.ratio) ? payload.ratio : 'auto'
   const resolution = isResolution(payload.resolution) ? payload.resolution : 'standard'
+  const rawRatio = isRatio(payload.ratio) ? payload.ratio : 'auto'
+  const ratio = resolution === 'auto' ? 'auto' : rawRatio === 'auto' ? '1:1' : rawRatio
   const size = getImageSize(ratio, resolution)
   const model = String(payload.model || '').trim()
   const baseUrl = normalizeBaseUrl(String(payload.baseUrl || '').trim(), env)

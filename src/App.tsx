@@ -8,7 +8,7 @@ import { HistoryPanel } from './components/HistoryPanel'
 import { TaskQueue } from './components/TaskQueue'
 import { createBackgroundTask, createId, generateImagesDirect, generateImagesStream, getBackgroundStats, getBackgroundTask, listBackgroundTasks, retryBackgroundTask, uploadImageToPixhost } from './lib/api'
 import { addHistory, clearHistory, deleteHistory, getHistory, updateHistoryImageUrl } from './lib/db'
-import { getImageSize, getResolutionLabel } from './lib/ratios'
+import { getAvailableRatios, getImageSize, getResolutionLabel, normalizeRatioForResolution } from './lib/ratios'
 import { addActiveBackgroundTask, loadActiveBackgroundTasks, removeActiveBackgroundTask, DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/storage'
 import './styles.css'
 
@@ -68,12 +68,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    setRatio(settings.defaultRatio)
-  }, [settings.defaultRatio])
-
-  useEffect(() => {
     setResolution(settings.defaultResolution)
-  }, [settings.defaultResolution])
+    setRatio(normalizeRatioForResolution(settings.defaultRatio, settings.defaultResolution))
+  }, [settings.defaultRatio, settings.defaultResolution])
 
   function showMessage(text: string, type: 'ok' | 'error' | 'info' = 'info') {
     setMessage({ text, type })
@@ -721,31 +718,37 @@ export default function App() {
 
           <section className="panel">
             <div className="label-row">
-              <label className="label">比例</label>
-              <span>{ratio === 'auto' ? '自动' : ratio}</span>
-            </div>
-            <RatioPicker
-              value={ratio}
-              onChange={(next) => {
-                setRatio(next)
-                patchSettings({ defaultRatio: next })
-              }}
-            />
-          </section>
-
-          <section className="panel">
-            <div className="label-row">
               <label className="label">分辨率档位</label>
               <span>{getResolutionLabel(resolution)}</span>
             </div>
             <ResolutionPicker
               value={resolution}
               onChange={(next) => {
+                const nextRatio = normalizeRatioForResolution(ratio, next)
                 setResolution(next)
-                patchSettings({ defaultResolution: next })
+                setRatio(nextRatio)
+                patchSettings({ defaultResolution: next, defaultRatio: nextRatio })
               }}
             />
-            <small className="hint-text">比例或分辨率选「自动」时不传 size，由上游模型自行决定。</small>
+            <small className="hint-text">先选分辨率，再选比例。分辨率选「自动」时比例只能自动，不传 size。</small>
+          </section>
+
+          <section className="panel">
+            <div className="label-row">
+              <label className="label">比例</label>
+              <span>{ratio === 'auto' ? '自动' : ratio}</span>
+            </div>
+            <RatioPicker
+              value={ratio}
+              ratios={getAvailableRatios(resolution)}
+              onChange={(next) => {
+                setRatio(next)
+                patchSettings({ defaultRatio: next })
+              }}
+            />
+            <small className="hint-text">
+              当前请求尺寸：{size}。固定分辨率会强制选择比例，避免「4K + 自动比例」实际不传 size。
+            </small>
           </section>
 
           <section className="panel split-2">

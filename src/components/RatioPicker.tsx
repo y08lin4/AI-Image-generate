@@ -1,15 +1,16 @@
-﻿import type { AspectRatio } from '../types'
+import type { AspectRatio } from '../types'
 import { RATIOS, getRatioPreviewStyle } from '../lib/ratios'
 
 interface Props {
   value: AspectRatio
   onChange: (ratio: AspectRatio) => void
+  ratios?: AspectRatio[]
 }
 
-export function RatioPicker({ value, onChange }: Props) {
+export function RatioPicker({ value, onChange, ratios = RATIOS }: Props) {
   return (
     <div className="ratio-list" role="radiogroup" aria-label="图片比例">
-      {RATIOS.map((ratio) => (
+      {ratios.map((ratio) => (
         <button
           key={ratio}
           type="button"
